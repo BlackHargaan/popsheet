@@ -2,11 +2,18 @@ import { useEffect, useState } from 'react'
 import { randomId } from '../core/layout'
 import type { ClassRoom } from '../core/types'
 import { deleteClass, listClasses, saveClass, takenCodes } from '../store'
+import { Lock } from './icons'
+
+function initials(name: string) {
+  const words = name.trim().split(/\s+/).filter(Boolean)
+  return (words.length > 1 ? words[0][0] + words[words.length - 1][0] : name.slice(0, 2)).toUpperCase()
+}
 
 function ClassCard({ cls, onChange }: { cls: ClassRoom; onChange: () => void }) {
   const [editing, setEditing] = useState(cls.students.length === 0)
   const [name, setName] = useState(cls.name)
   const [text, setText] = useState(cls.students.map((s) => s.name).join('\n'))
+  const count = new Set(text.split('\n').map((s) => s.trim()).filter(Boolean)).size
 
   const save = async () => {
     const taken = await takenCodes()
@@ -30,15 +37,24 @@ function ClassCard({ cls, onChange }: { cls: ClassRoom; onChange: () => void }) 
 
   if (!editing) {
     return (
-      <li className="class">
-        <div className="row between">
-          <div>
-            <div className="title">{cls.name}</div>
-            <div className="muted">{cls.students.length} students</div>
+      <li className="panel class-card">
+        <div className="head">
+          <div className="row" style={{ gap: '0.9rem' }}>
+            <span className="avatar" aria-hidden="true">
+              {initials(cls.name)}
+            </span>
+            <div>
+              <h3>{cls.name}</h3>
+              <div className="count">
+                {cls.students.length} student{cls.students.length === 1 ? '' : 's'}
+              </div>
+            </div>
           </div>
           <div className="row">
-            <button onClick={() => setEditing(true)}>Edit</button>
-            <button className="ghost" title="Delete class" onClick={() => void remove()}>
+            <button className="sm" onClick={() => setEditing(true)}>
+              Edit list
+            </button>
+            <button className="ghost sm" title="Delete class" aria-label={`Delete ${cls.name}`} onClick={() => void remove()}>
               ✕
             </button>
           </div>
@@ -46,7 +62,7 @@ function ClassCard({ cls, onChange }: { cls: ClassRoom; onChange: () => void }) 
         <div className="chips">
           {cls.students.map((s) => (
             <span key={s.code}>
-              {s.name} <code>{s.code}</code>
+              {s.name} <code title="Code printed on this student's sheet">{s.code}</code>
             </span>
           ))}
         </div>
@@ -54,21 +70,32 @@ function ClassCard({ cls, onChange }: { cls: ClassRoom; onChange: () => void }) 
     )
   }
   return (
-    <li className="class">
+    <li className="panel class-card">
       <label className="stack">
         Class name
-        <input value={name} onChange={(e) => setName(e.target.value)} />
+        <input value={name} onChange={(e) => setName(e.target.value)} autoFocus={cls.students.length === 0} />
       </label>
       <label className="stack">
-        Students, one per line
-        <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder={'Ada Lovelace\nAlan Turing'} />
+        <span className="row between">
+          Students, one per line
+          <span className="help">{count} so far · paste straight from a spreadsheet</span>
+        </span>
+        <textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder={'Ada Lovelace\nAlan Turing\nGrace Hopper'} />
       </label>
       <div className="row">
         <button className="primary" onClick={() => void save()}>
           Save class
         </button>
-        {cls.students.length > 0 && <button onClick={() => setEditing(false)}>Cancel</button>}
-        {cls.students.length === 0 && <button onClick={() => void deleteClass(cls.id).then(onChange)}>Cancel</button>}
+        {cls.students.length > 0 && (
+          <button className="quiet" onClick={() => setEditing(false)}>
+            Cancel
+          </button>
+        )}
+        {cls.students.length === 0 && (
+          <button className="quiet" onClick={() => void deleteClass(cls.id).then(onChange)}>
+            Cancel
+          </button>
+        )}
       </div>
     </li>
   )
@@ -86,18 +113,39 @@ export function Classes() {
 
   return (
     <div className="narrow">
-      <div className="row between">
-        <h1>Classes</h1>
+      <div className="page-head">
+        <div>
+          <div className="eyebrow">Rosters</div>
+          <h1>Classes</h1>
+        </div>
         <button className="primary" onClick={() => void add()}>
           New class
         </button>
       </div>
-      <p className="muted">
-        Each student gets a short code. Printed sheets carry only the code, and the list that links codes to names
-        is kept on this device.
-      </p>
-      {classes?.length === 0 && <div className="empty">No classes yet. You can still print numbered copies without one.</div>}
-      <ul className="cards block">{classes?.map((c) => <ClassCard key={c.id} cls={c} onChange={load} />)}</ul>
+      <div className="panel privacy">
+        <Lock size={18} />
+        <div>
+          Each student gets a short code. Printed sheets carry only the code; the list that links codes to names never
+          leaves this device.
+        </div>
+      </div>
+      {classes?.length === 0 && (
+        <div className="panel empty-state">
+          <div className="ill" aria-hidden="true">
+            <i />
+            <i className="f" />
+            <i />
+          </div>
+          <h2>No classes yet</h2>
+          <p>Add a class to print one named sheet per student. You can still print numbered copies without one.</p>
+          <button className="primary" onClick={() => void add()}>
+            Add your first class
+          </button>
+        </div>
+      )}
+      <ul className="class-list">
+        {classes?.map((c) => <ClassCard key={c.id} cls={c} onChange={load} />)}
+      </ul>
     </div>
   )
 }

@@ -8,7 +8,7 @@ import {
   qrModuleCorners,
   questionBox,
 } from './layout'
-import type { Pt } from './layout'
+import type { PageCode, Pt } from './layout'
 import type { Mark, PageSize, Question } from './types'
 
 export interface Rgba {
@@ -224,32 +224,117 @@ function findSquare(g: Gray, near: Pt, radius: number, side: number): Pt | null 
   return best
 }
 
-export interface PageRead {
-  worksheetId: string
-  page: number
-  studentCode: string
-  /** Reads the bubbles once the caller has looked the worksheet up. */
-  read(size: PageSize, questions: Question[]): Record<string, Mark>
+export interface PageRead extends PageCode {
+  /**
+   * Reads the bubbles once the caller has looked the worksheet up. `crops` keeps a small picture of each
+   * question for review; number grid columns skip it (the stored page image covers them).
+   */
+  read(size: PageSize, questions: Question[], crops?: boolean): Record<string, Mark>
+  /**
+   * The whole page, straightened and flattened to page coordinates at `ppp` pixels per point
+   * (greyscale), so any region of it can be cropped later.
+   */
+  straighten(size: PageSize, ppp: number): GrayImage
+}
+
+export interface GrayImage {
+  width: number
+  height: number
+  data: Uint8Array
+}
+
+/** Shrinks an image by `f` (< 1), averaging the pixels each new pixel covers. */
+export function shrink(img: Rgba, f: number): Rgba {
+  const width = Math.max(1, Math.round(img.width * f))
+  const height = Math.max(1, Math.round(img.height * f))
+  const data = new Uint8ClampedArray(width * height * 4)
+  const sx = img.width / width
+  const sy = img.height / height
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.floor(y * sy)
+    const y1 = Math.max(y0 + 1, Math.floor((y + 1) * sy))
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.floor(x * sx)
+      const x1 = Math.max(x0 + 1, Math.floor((x + 1) * sx))
+      let r = 0
+      let g = 0
+      let b = 0
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const i = (yy * img.width + xx) * 4
+          r += img.data[i]
+          g += img.data[i + 1]
+          b += img.data[i + 2]
+        }
+      }
+      const n = (y1 - y0) * (x1 - x0)
+      const o = (y * width + x) * 4
+      data[o] = r / n
+      data[o + 1] = g / n
+      data[o + 2] = b / n
+      data[o + 3] = 255
+    }
+  }
+  return { data, width, height }
+}
+
+/**
+ * Finds and decodes the page code. The code is small, so in a photo each of its squares may be only a few
+ * pixels wide; with camera noise on top the decoder sometimes misses it at full size, yet reads it once the
+ * picture is shrunk a little (which averages the noise away). So if the first look fails, it looks again at
+ * smaller sizes. Corners are returned in the original picture's pixels.
+ */
+function findPageCode(img: Rgba) {
+  for (const f of [1, 0.75, 0.6]) {
+    const im = f === 1 ? img : shrink(img, f)
+    if (Math.min(im.width, im.height) < 400) break
+    const code = jsQR(im.data, im.width, im.height, { inversionAttempts: 'dontInvert' })
+    const parsed = code && decodePageCode(code.data)
+    if (!code || !parsed) continue
+    const loc = code.location
+    const back = (p: Pt) => ({ x: (p.x + 0.5) / f - 0.5, y: (p.y + 0.5) / f - 0.5 })
+    return {
+      parsed,
+      version: code.version,
+      corners: [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner].map(back),
+    }
+  }
+  return null
 }
 
 /** Finds the page code in a photo or scan. Throws ScanError when there isn't one. */
 export function locatePage(img: Rgba): PageRead {
-  const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' })
-  const parsed = code && decodePageCode(code.data)
-  if (!code || !parsed) throw new ScanError('No page code found. Make sure the whole page is in the picture.')
-  const loc = code.location
-  const qrImg = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner]
+  const found = findPageCode(img)
+  if (!found) throw new ScanError('No page code found. Make sure the whole page is in the picture.')
+  const { parsed, corners: qrImg } = found
+  const code = found
   const modules = (code.version ?? 2) * 4 + 17
   const gray = toGray(img)
+  // Lining the page up is the slow part; do it once per page size.
+  const aligned = new Map<string, Homography>()
+  const homography = (size: PageSize) => {
+    const k = `${size.width}x${size.height}`
+    if (!aligned.has(k)) aligned.set(k, align(gray, size, qrImg, modules))
+    return aligned.get(k)!
+  }
   return {
     ...parsed,
-    read: (size, questions) => readPage(gray, size, questions, qrImg, modules),
+    read: (size, questions, crops = true) => readBubbles(gray, homography(size), questions, crops),
+    straighten: (size, ppp) => straighten(gray, homography(size), size, ppp),
   }
 }
 
-function readPage(g: Gray, size: PageSize, questions: Question[], qrImg: Pt[], modules: number) {
-  const h = align(g, size, qrImg, modules)
-  return readBubbles(g, h, questions)
+function straighten(g: Gray, h: Homography, size: PageSize, ppp: number): GrayImage {
+  const width = Math.round(size.width * ppp)
+  const height = Math.round(size.height * ppp)
+  const data = new Uint8Array(width * height)
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const p = applyH(h, { x: (x + 0.5) / ppp, y: (y + 0.5) / ppp })
+      data[y * width + x] = sample(g, p.x, p.y)
+    }
+  }
+  return { width, height, data }
 }
 
 function align(g: Gray, size: PageSize, qrImg: Pt[], modules: number): Homography {
@@ -315,7 +400,7 @@ function paperLevel(g: Gray, h: Homography, c: Pt): number {
 export const FILLED = 0.25
 export const BLANK = 0.1
 
-function readBubbles(g: Gray, h: Homography, questions: Question[]): Record<string, Mark> {
+function readBubbles(g: Gray, h: Homography, questions: Question[], crops: boolean): Record<string, Mark> {
   const raw = questions.map((q) =>
     Array.from({ length: q.choices }, (_, i) => {
       const c = bubbleCenter(q, i)
@@ -341,7 +426,7 @@ function readBubbles(g: Gray, h: Homography, questions: Question[]): Record<stri
     else if (top >= FILLED && second < Math.max(BLANK, 0.5 * top)) mark = { choice: order[0], status: 'ok', scores }
     else if (second >= FILLED && second >= 0.6 * top) mark = { choice: null, status: 'multi', scores }
     else mark = { choice: order[0], status: 'unsure', scores }
-    mark.crop = cropQuestion(g, h, q)
+    if (crops) mark.crop = cropQuestion(g, h, q)
     out[q.id] = mark
   })
   return out

@@ -5,12 +5,13 @@ import { join } from 'node:path'
 import { PNG } from 'pngjs'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { bubbleCenter } from '../src/core/layout'
-import type { Pt } from '../src/core/layout'
 import { buildPrintable } from '../src/core/pdf'
 import { makeSampleWorksheet } from '../src/core/sample'
-import { applyH, locatePage, solveHomography } from '../src/core/scan'
+import { locatePage } from '../src/core/scan'
 import type { Rgba } from '../src/core/scan'
 import type { Worksheet } from '../src/core/types'
+import { layoutForScan, versionForPrint } from '../src/core/versions'
+import { photograph, rng } from './helpers'
 
 const DPI = 150
 const K = DPI / 72
@@ -19,21 +20,12 @@ let clean: PNG
 
 beforeAll(async () => {
   ws = await makeSampleWorksheet()
-  const pdf = await buildPrintable(ws, [{ code: 'AB2C', label: 'Test Student' }])
+  const pdf = await buildPrintable(ws, [{ code: 'AB2C', label: 'Test Student' }], 1)
   const dir = mkdtempSync(join(tmpdir(), 'popsheet-'))
   writeFileSync(join(dir, 'in.pdf'), pdf)
   execFileSync('pdftoppm', ['-r', String(DPI), '-png', '-singlefile', join(dir, 'in.pdf'), join(dir, 'out')])
   clean = PNG.sync.read(readFileSync(join(dir, 'out.png')))
 })
-
-/** seeded noise */
-function rng(seed: number) {
-  let s = seed
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0
-    return s / 4294967296
-  }
-}
 
 interface Fill {
   q: number
@@ -65,50 +57,12 @@ function fillBubbles(fills: Fill[]): PNG {
   return img
 }
 
-/** Simulates a phone photo: page corners land on `quad` (TL, TR, BR, BL) in a w x h picture. */
-function photograph(src: PNG, w: number, h: number, quad: Pt[], shade = 0): Rgba {
-  const corners = [
-    { x: 0, y: 0 },
-    { x: src.width, y: 0 },
-    { x: src.width, y: src.height },
-    { x: 0, y: src.height },
-  ]
-  const inv = solveHomography(quad, corners)
-  const out = new Uint8ClampedArray(w * h * 4)
-  const rand = rng(3)
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const p = applyH(inv, { x, y })
-      let v = [70, 52, 40] // desk
-      if (p.x >= 0 && p.y >= 0 && p.x < src.width - 1 && p.y < src.height - 1) {
-        const x0 = Math.floor(p.x)
-        const y0 = Math.floor(p.y)
-        const fx = p.x - x0
-        const fy = p.y - y0
-        v = [0, 1, 2].map((ch) => {
-          const at = (xx: number, yy: number) => src.data[(yy * src.width + xx) * 4 + ch]
-          return (
-            at(x0, y0) * (1 - fx) * (1 - fy) +
-            at(x0 + 1, y0) * fx * (1 - fy) +
-            at(x0, y0 + 1) * (1 - fx) * fy +
-            at(x0 + 1, y0 + 1) * fx * fy
-          )
-        })
-      }
-      const light = 1 - shade * ((x / w) * 0.6 + (y / h) * 0.4)
-      const i = (y * w + x) * 4
-      for (let ch = 0; ch < 3; ch++) out[i + ch] = v[ch] * light * 0.93 + (rand() - 0.5) * 12
-      out[i + 3] = 255
-    }
-  }
-  return { data: out, width: w, height: h }
-}
-
 function read(img: Rgba) {
   const page = locatePage(img)
   expect(page.worksheetId).toBe(ws.id)
   expect(page.studentCode).toBe('AB2C')
   expect(page.page).toBe(0)
+  expect(page.version).toBe(1)
   return page.read(ws.pages[0], ws.questions)
 }
 
@@ -191,6 +145,81 @@ describe('scanner', () => {
     expect([m[3].choice, m[3].status]).toEqual([null, 'blank'])
     expect([m[4].choice, m[4].status]).toEqual([1, 'ok'])
     expect(m.slice(5).map((x) => x.choice)).toEqual(answers.slice(5))
+  })
+
+  it('reads a sheet against the layout it was printed with, after the bubbles moved', () => {
+    const v1 = versionForPrint(ws).ws
+    // The teacher nudges question 1 sideways after printing; old copies still have it in the old place.
+    const v2 = versionForPrint({ ...v1, questions: v1.questions.map((q, i) => (i === 0 ? { ...q, x: q.x - 60 } : q)) }).ws
+    const img = photograph(fillBubbles(allFilled), 1500, 2000, [
+      { x: 150, y: 120 },
+      { x: 1380, y: 100 },
+      { x: 1420, y: 1880 },
+      { x: 110, y: 1900 },
+    ])
+    const page = locatePage(img)
+    const layout = layoutForScan(v2, page.version)!
+    const marks = page.read(ws.pages[0], layout.questions)
+    expect(ws.questions.map((q) => marks[q.id].choice)).toEqual(answers)
+    // Reading with the edited layout instead would miss question 1.
+    const wrong = page.read(ws.pages[0], v2.questions)
+    expect(wrong[ws.questions[0].id].choice).not.toBe(answers[0])
+  })
+
+  it('straightens a tilted photo so written answers can be cropped by position', () => {
+    // A dark scribble in a known spot of the printed page...
+    const img = new PNG({ width: clean.width, height: clean.height })
+    clean.data.copy(img.data)
+    const spot = { x: 120, y: 560, width: 160, height: 30 }
+    for (let y = Math.round(spot.y * K); y < (spot.y + spot.height) * K; y++) {
+      for (let x = Math.round(spot.x * K); x < (spot.x + spot.width) * K; x++) {
+        const i = (y * img.width + x) * 4
+        img.data[i] = img.data[i + 1] = img.data[i + 2] = 40
+      }
+    }
+    const photo = photograph(img, 1500, 2000, [
+      { x: 190, y: 160 },
+      { x: 1330, y: 90 },
+      { x: 1440, y: 1830 },
+      { x: 90, y: 1900 },
+    ], 0.3)
+    const ppp = 2
+    const flat = locatePage(photo).straighten(ws.pages[0], ppp)
+    expect(flat.width).toBe(Math.round(ws.pages[0].width * ppp))
+    const mean = (r: typeof spot) => {
+      let sum = 0
+      let n = 0
+      for (let y = Math.round(r.y * ppp); y < (r.y + r.height) * ppp; y++) {
+        for (let x = Math.round(r.x * ppp); x < (r.x + r.width) * ppp; x++) {
+          sum += flat.data[y * flat.width + x]
+          n++
+        }
+      }
+      return sum / n
+    }
+    // ...comes out dark exactly where it was drawn (inset to allow for blur), and the paper beside it is light.
+    expect(mean({ x: spot.x + 4, y: spot.y + 4, width: spot.width - 8, height: spot.height - 8 })).toBeLessThan(90)
+    expect(mean({ x: spot.x, y: spot.y + spot.height + 12, width: spot.width, height: 12 })).toBeGreaterThan(150)
+  })
+
+  it('finds a page code that the decoder misses at full photo size', async () => {
+    // With this worksheet id the code's pattern didn't decode in this photo at full size (each square is
+    // about 4 pixels wide, plus camera noise). The scanner now looks again at smaller sizes.
+    const hard = { ...ws, id: 'QA4L6E' }
+    const pdf = await buildPrintable(hard, [{ code: 'AB2C', label: 'Test Student' }], 1)
+    const dir = mkdtempSync(join(tmpdir(), 'popsheet-'))
+    writeFileSync(join(dir, 'in.pdf'), pdf)
+    execFileSync('pdftoppm', ['-r', String(DPI), '-png', '-singlefile', join(dir, 'in.pdf'), join(dir, 'out')])
+    const photo = photograph(PNG.sync.read(readFileSync(join(dir, 'out.png'))), 1500, 2000, [
+      { x: 150, y: 120 },
+      { x: 1380, y: 100 },
+      { x: 1420, y: 1880 },
+      { x: 110, y: 1900 },
+    ])
+    const page = locatePage(photo)
+    expect(page.worksheetId).toBe('QA4L6E')
+    // The corners found on the smaller copy line the full-size page up correctly.
+    expect(Object.values(page.read(hard.pages[0], hard.questions)).every((m) => m.status === 'blank')).toBe(true)
   })
 
   it('never silently misreads a faint tick', () => {

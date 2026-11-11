@@ -1,4 +1,4 @@
-import type { PageSize, Question } from './types'
+import type { AnswerBox, PageSize, Question } from './types'
 
 /** Corner alignment squares. */
 export const FID_SIZE = 14
@@ -73,16 +73,43 @@ export function contentPlacement(p: PageSize, scale: number) {
   }
 }
 
-export const CODE_PREFIX = 'PS1'
-
-export function encodePageCode(worksheetId: string, page: number, studentCode: string) {
-  return `${CODE_PREFIX}:${worksheetId}:${page}:${studentCode}`
+/** Where an answer box (stored in original-page points) lands on the printed page, for a given shrink. */
+export function boxOnPage(b: Pick<AnswerBox, 'x' | 'y' | 'width' | 'height'>, p: PageSize, scale: number) {
+  const place = contentPlacement(p, scale)
+  return { x: place.x + b.x * scale, y: place.y + b.y * scale, width: b.width * scale, height: b.height * scale }
 }
 
-export function decodePageCode(text: string) {
-  const m = /^PS1:([A-Z0-9]+):(\d+):([A-Z0-9]+)$/.exec(text.trim())
-  if (!m) return null
-  return { worksheetId: m[1], page: Number(m[2]), studentCode: m[3] }
+/** The inverse of `boxOnPage`: a rectangle drawn on the printed page, back in original-page points. */
+export function boxFromPage(r: { x: number; y: number; width: number; height: number }, p: PageSize, scale: number) {
+  const place = contentPlacement(p, scale)
+  return { x: (r.x - place.x) / scale, y: (r.y - place.y) / scale, width: r.width / scale, height: r.height / scale }
+}
+
+/**
+ * Page codes. `PS2:<worksheet>:<page>:<version>:<student>`, where version is the printed layout the sheet
+ * was made from. `PS1` codes (printed before versions existed) have no version.
+ */
+export const CODE_PREFIX = 'PS2'
+
+export function encodePageCode(worksheetId: string, page: number, version: number, studentCode: string) {
+  return `${CODE_PREFIX}:${worksheetId}:${page}:${version}:${studentCode}`
+}
+
+export interface PageCode {
+  worksheetId: string
+  page: number
+  /** null for sheets printed before layouts were versioned. */
+  version: number | null
+  studentCode: string
+}
+
+export function decodePageCode(text: string): PageCode | null {
+  const t = text.trim()
+  const v2 = /^PS2:([A-Z0-9]+):(\d+):(\d+):([A-Z0-9]+)$/.exec(t)
+  if (v2) return { worksheetId: v2[1], page: Number(v2[2]), version: Number(v2[3]), studentCode: v2[4] }
+  const v1 = /^PS1:([A-Z0-9]+):(\d+):([A-Z0-9]+)$/.exec(t)
+  if (v1) return { worksheetId: v1[1], page: Number(v1[2]), version: null, studentCode: v1[3] }
+  return null
 }
 
 const ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // no 0/O/1/I

@@ -12,6 +12,7 @@ import {
   fiducials,
   qrBox,
 } from './layout'
+import { MINUS, gridBox, gridBubble, gridColumns, writeBoxes } from './grids'
 import { LETTERS } from './types'
 import type { PageSize, Worksheet } from './types'
 
@@ -39,6 +40,7 @@ function drawMarks(
   size: PageSize,
   ws: Worksheet,
   pageIndex: number,
+  version: number,
   copy: Copy,
   font: PDFFont,
   bold: PDFFont,
@@ -67,7 +69,7 @@ function drawMarks(
 
   // Page code
   const box = qrBox(size)
-  const qr = qrMatrix(encodePageCode(ws.id, pageIndex, copy.code))
+  const qr = qrMatrix(encodePageCode(ws.id, pageIndex, version, copy.code))
   const m = QR_BOX / (qr.size + 2 * QR_QUIET_MODULES)
   page.drawRectangle({ x: box.x, y: H - box.y - QR_BOX, width: QR_BOX, height: QR_BOX, color: white })
   for (let r = 0; r < qr.size; r++) {
@@ -133,10 +135,48 @@ function drawMarks(
       page.drawText(ch, { x: c.x - cw / 2, y: H - c.y - 2.5, size: 7, font, color: grey })
     }
   }
+
+  // Number grids
+  for (const g of (ws.grids ?? []).filter((g) => g.page === pageIndex)) {
+    // Border kept clear of the outer bubbles, where the scanner samples the paper.
+    const box = gridBox(g, 7)
+    page.drawRectangle({
+      x: box.x,
+      y: H - box.y - box.height,
+      width: box.width,
+      height: box.height,
+      color: white,
+      borderColor: rgb(0.7, 0.7, 0.7),
+      borderWidth: 0.6,
+    })
+    page.drawText(g.label, { x: box.x + 5, y: H - box.y - 6 - 7, size: 8, font: bold, color: black })
+    for (const w of writeBoxes(g)) {
+      page.drawRectangle({
+        x: w.x,
+        y: H - w.y - w.height,
+        width: w.width,
+        height: w.height,
+        borderColor: rgb(0.25, 0.25, 0.25),
+        borderWidth: 0.7,
+      })
+    }
+    for (const col of gridColumns(g)) {
+      col.symbols.forEach((sym, row) => {
+        const c = gridBubble(g, col, row)
+        page.drawCircle({ x: c.x, y: H - c.y, size: BUBBLE_R, borderColor: rgb(0.25, 0.25, 0.25), borderWidth: 0.8, color: white })
+        const ch = sym === MINUS ? '-' : sym
+        const cw = font.widthOfTextAtSize(ch, 7)
+        page.drawText(ch, { x: c.x - cw / 2, y: H - c.y - 2.5, size: 7, font, color: grey })
+      })
+    }
+  }
 }
 
-/** Builds the printable PDF: one full set of pages per copy. */
-export async function buildPrintable(ws: Worksheet, copies: Copy[]): Promise<Uint8Array> {
+/**
+ * Builds the printable PDF: one full set of pages per copy. `version` is the printed layout version
+ * (from `versionForPrint`) that goes into every page code.
+ */
+export async function buildPrintable(ws: Worksheet, copies: Copy[], version: number): Promise<Uint8Array> {
   const src = await PDFDocument.load(ws.pdf)
   const out = await PDFDocument.create()
   out.setTitle(ws.name)
@@ -154,7 +194,7 @@ export async function buildPrintable(ws: Worksheet, copies: Copy[]): Promise<Uin
         width: place.width,
         height: place.height,
       })
-      drawMarks(page, size, ws, i, copy, font, bold)
+      drawMarks(page, size, ws, i, version, copy, font, bold)
     })
   }
   return out.save()
