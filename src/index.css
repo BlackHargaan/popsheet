@@ -611,3 +611,23 @@ button.link { border: 0; background: none; padding: 0; color: var(--ink); text-d
   .new-tile { min-height: 120px; }
   .stat-tile .v { font-size: 1.7rem; }
 }
+
+/* ---------- Installed app ---------- */
+.install-btn { display: inline-flex; align-items: center; gap: 0.4rem; border-radius: 999px; color: var(--ink-2); font-weight: 550; margin-right: 0.25rem; }
+.install-ios { position: relative; }
+.install-pop { position: absolute; right: 0; top: calc(100% + 0.5rem); width: min(280px, 80vw); padding: 0.9rem 1rem; z-index: 30; box-shadow: var(--shadow-lift); }
+.install-pop p { margin: 0 0 0.5rem; }
+.update-toast {
+  position: fixed; z-index: 40; left: 50%; bottom: max(1rem, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; justify-content: center;
+  padding: 0.6rem 0.7rem 0.6rem 1rem; box-shadow: var(--shadow-lift); max-width: calc(100vw - 2rem);
+}
+/* Installed on a phone with a notch: keep the header and footer clear of it. */
+.top { padding-top: max(0.7rem, env(safe-area-inset-top)); padding-left: max(clamp(1rem, 3vw, 2rem), env(safe-area-inset-left)); padding-right: max(clamp(1rem, 3vw, 2rem), env(safe-area-inset-right)); }
+footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
+@media (max-width: 600px) {
+  .top { padding-top: max(0.55rem, env(safe-area-inset-top)); padding-left: max(0.8rem, env(safe-area-inset-left)); padding-right: max(0.8rem, env(safe-area-inset-right)); }
+  .install-btn span { display: none; }
+  .install-btn { padding: 0.4rem 0.5rem; }
+}

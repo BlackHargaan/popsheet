@@ -5,6 +5,7 @@ import { Home } from './ui/Home'
 import { Print } from './ui/Print'
 import { Results } from './ui/Results'
 import { Scan } from './ui/Scan'
+import { InstallButton, UpdateNotice } from './ui/AppStatus'
 import { Lock, ScanIcon } from './ui/icons'
 import { useRoute } from './ui/nav'
 
@@ -47,6 +48,7 @@ export default function App() {
       <header className="top">
         <Logo />
         <nav>
+          <InstallButton />
           <NavLink href="#/" on={route.length === 0 || route[0] === 'w'}>
             Worksheets
           </NavLink>
@@ -60,6 +62,7 @@ export default function App() {
         </nav>
       </header>
       <main>{page}</main>
+      <UpdateNotice />
       <footer>
         <Lock size={14} />
         Everything stays on this device. Worksheets, names and scans are never uploaded.
