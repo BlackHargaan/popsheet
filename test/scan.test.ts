@@ -222,6 +222,26 @@ describe('scanner', () => {
     expect(Object.values(page.read(hard.pages[0], hard.questions)).every((m) => m.status === 'blank')).toBe(true)
   })
 
+  it('finds a page code whose squares are only a few pixels wide', async () => {
+    // In this photo each square of the code is about 3 pixels wide, and the decoder misses it at full size and
+    // smaller. The scanner then looks at an enlarged copy (and maps the corners back to this photo).
+    const hard = { ...ws, id: 'QA4L6E' }
+    const pdf = await buildPrintable(hard, [{ code: 'AB2C', label: 'Test Student' }], 1)
+    const dir = mkdtempSync(join(tmpdir(), 'popsheet-'))
+    writeFileSync(join(dir, 'in.pdf'), pdf)
+    execFileSync('pdftoppm', ['-r', String(DPI), '-png', '-singlefile', join(dir, 'in.pdf'), join(dir, 'out')])
+    const k = 1250 / 1200
+    const photo = photograph(PNG.sync.read(readFileSync(join(dir, 'out.png'))), 1250, Math.round((1250 * 4) / 3), [
+      { x: 120 * k, y: 90 * k },
+      { x: 1100 * k, y: 80 * k },
+      { x: 1140 * k, y: 1510 * k },
+      { x: 90 * k, y: 1520 * k },
+    ], 0.25)
+    const page = locatePage(photo)
+    expect(page.worksheetId).toBe('QA4L6E')
+    expect(Object.values(page.read(hard.pages[0], hard.questions)).every((m) => m.status === 'blank')).toBe(true)
+  })
+
   it('never silently misreads a faint tick', () => {
     // A tiny, faint mark must come back blank or flagged, not as a confident answer.
     const img = fillBubbles([{ q: 0, choice: 2, level: 170, cover: 0.45 }])

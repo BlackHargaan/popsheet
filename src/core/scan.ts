@@ -278,16 +278,50 @@ export function shrink(img: Rgba, f: number): Rgba {
   return { data, width, height }
 }
 
+/** Enlarges an image by `f` (> 1), blending the four nearest pixels. Pixel centres map as (x + 0.5) / f - 0.5. */
+export function enlarge(img: Rgba, f: number): Rgba {
+  const width = Math.round(img.width * f)
+  const height = Math.round(img.height * f)
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let y = 0; y < height; y++) {
+    const py = Math.min(img.height - 1, Math.max(0, (y + 0.5) / f - 0.5))
+    const y0 = Math.min(img.height - 2, Math.floor(py))
+    const fy = py - y0
+    for (let x = 0; x < width; x++) {
+      const px = Math.min(img.width - 1, Math.max(0, (x + 0.5) / f - 0.5))
+      const x0 = Math.min(img.width - 2, Math.floor(px))
+      const fx = px - x0
+      const i = (y0 * img.width + x0) * 4
+      const j = i + img.width * 4
+      const o = (y * width + x) * 4
+      for (let c = 0; c < 3; c++) {
+        const top = img.data[i + c] * (1 - fx) + img.data[i + 4 + c] * fx
+        const bottom = img.data[j + c] * (1 - fx) + img.data[j + 4 + c] * fx
+        data[o + c] = top * (1 - fy) + bottom * fy
+      }
+      data[o + 3] = 255
+    }
+  }
+  return { data, width, height }
+}
+
+/** Sizes to look for the page code at, in order: as is, smaller (averages camera noise away), then larger. */
+const CODE_SEARCH = [1, 0.75, 0.6, 1.5, 2]
+/** Don't enlarge past this many pixels on the long side; it gets slow and is no longer needed. */
+const CODE_SEARCH_MAX = 4200
+
 /**
  * Finds and decodes the page code. The code is small, so in a photo each of its squares may be only a few
- * pixels wide; with camera noise on top the decoder sometimes misses it at full size, yet reads it once the
- * picture is shrunk a little (which averages the noise away). So if the first look fails, it looks again at
- * smaller sizes. Corners are returned in the original picture's pixels.
+ * pixels wide. With camera noise on top the decoder sometimes misses it at full size, yet reads it once the
+ * picture is shrunk a little (which averages the noise away); when the squares are only 3 or 4 pixels wide it
+ * needs the picture enlarged instead. So if the first look fails, it looks again at other sizes. Corners are
+ * returned in the original picture's pixels.
  */
 function findPageCode(img: Rgba) {
-  for (const f of [1, 0.75, 0.6]) {
-    const im = f === 1 ? img : shrink(img, f)
-    if (Math.min(im.width, im.height) < 400) break
+  for (const f of CODE_SEARCH) {
+    if (f < 1 && Math.min(img.width, img.height) * f < 400) continue
+    if (f > 1 && Math.max(img.width, img.height) * f > CODE_SEARCH_MAX) continue
+    const im = f === 1 ? img : f < 1 ? shrink(img, f) : enlarge(img, f)
     const code = jsQR(im.data, im.width, im.height, { inversionAttempts: 'dontInvert' })
     const parsed = code && decodePageCode(code.data)
     if (!code || !parsed) continue
