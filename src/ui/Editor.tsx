@@ -1,3 +1,5 @@
+import { PageManager } from './PageManager'
+import { go } from './nav'
 import { duplicateItems, editorItems, moveItems, snapItems } from '../core/editing'
 import { useHistory } from './useHistory'
 import { useEffect, useRef, useState } from 'react'
@@ -60,7 +62,9 @@ export function Editor({ id }: { id: string }) {
   const history = useHistory<Worksheet>((next) => { void saveWorksheet(next) })
   const ws = history.value
   const setWs = history.set
-  const [page, setPage] = useState(0)
+  const [pageIndex, setPage] = useState(0)
+  const page = ws ? Math.min(pageIndex, ws.pages.length - 1) : 0
+  const [pagesOpen, setPagesOpen] = useState(false)
   const [tool, setTool] = useState<Tool>('select')
   const [copyCount, setCopyCount] = useState(1)
   const [copyDirection, setCopyDirection] = useState<'down' | 'across'>('down')
@@ -109,7 +113,7 @@ export function Editor({ id }: { id: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (!ws || t.closest('input, select, textarea, [contenteditable="true"]')) return
+      if (!ws || pagesOpen || t.closest('input, select, textarea, [contenteditable="true"]')) return
       if ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase())) {
         e.preventDefault()
         if (e.key.toLowerCase() === 'y' || e.shiftKey) history.redo(); else history.undo()
@@ -373,6 +377,13 @@ export function Editor({ id }: { id: string }) {
 
   return (
     <div className="editor">
+      {pagesOpen && <PageManager ws={ws} currentPage={page} onClose={() => setPagesOpen(false)} onApplied={(next, asCopy) => {
+        setPagesOpen(false)
+        if (asCopy) { go(`/w/${next.id}`); return }
+        commit(next, false)
+        setSelected(null)
+        setPage(0)
+      }} />}
       <div className="editor-main">
         <Back href="#/">All worksheets</Back>
         <input
@@ -382,6 +393,7 @@ export function Editor({ id }: { id: string }) {
           onChange={(e) => commit({ ...ws, name: e.target.value })}
         />
         <div className="toolbar panel">
+          {ws.pages.length > 1 && <button onClick={() => setPagesOpen(true)}>Manage PDF pages</button>}
           <button disabled={!history.canUndo} onClick={history.undo} title="Undo (Ctrl/Cmd+Z)">Undo</button>
           <button disabled={!history.canRedo} onClick={history.redo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
           <div className="seg tools" role="group" aria-label="What clicking the page adds">

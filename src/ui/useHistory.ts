@@ -9,10 +9,10 @@ export function useHistory<T>(save: (value: T) => void) {
   const future = useRef<T[]>([])
   const start = useRef<T | null>(null)
   const set = useCallback((next: T | null | undefined) => { current.current = next; render(next) }, [])
-  const commit = (next: T) => {
+  const commit = (next: T, persist = true) => {
     const before = start.current ?? current.current
     if (before != null && before !== next) past.current = [...past.current.slice(-99), before]
-    start.current = null; future.current = []; set(next); sync(); save(next)
+    start.current = null; future.current = []; set(next); sync(); if (persist) save(next)
   }
   const travel = (redo: boolean) => {
     if (start.current) return

@@ -137,3 +137,35 @@ export async function restoreBackup(incoming: import('./core/backup').BackupEntr
     }
   })
 }
+
+/** Save page removal only while the worksheet still has the same unprinted, unscanned source. */
+export async function savePageSelection(source: Worksheet, next: Worksheet, asCopy: boolean) {
+  const store = createStore('keyval-store', 'keyval')
+  return store('readwrite', async objectStore => {
+    const complete = promisifyRequest(objectStore.transaction)
+    try {
+      const [current, keys] = await Promise.all([
+        promisifyRequest<Worksheet | undefined>(objectStore.get(`ws:${source.id}`)),
+        promisifyRequest<IDBValidKey[]>(objectStore.getAllKeys()),
+      ])
+      if (!current) throw new Error('The original worksheet no longer exists. Close this dialog and return to the library.')
+      if (!asCopy) {
+        if (current.printed?.length || current.extras.length || keys.some(key => typeof key === 'string' && key.startsWith(`scan:${source.id}:`))) {
+          throw new Error('This worksheet now has printed copies or scans. Close and reopen page selection to save the selected pages as a new worksheet.')
+        }
+        const sameMetadata = JSON.stringify({ ...current, pdf: undefined }) === JSON.stringify({ ...source, pdf: undefined })
+        const samePdf = current.pdf.length === source.pdf.length && current.pdf.every((byte, i) => byte === source.pdf[i])
+        if (!sameMetadata || !samePdf) throw new Error('This worksheet changed elsewhere. Close this dialog and reload the worksheet before selecting pages.')
+        if (next.id !== source.id) throw new Error('The worksheet does not match the selected pages.')
+      } else if (next.id === source.id || keys.includes(`ws:${next.id}`)) {
+        throw new Error('Could not create an independent worksheet. Please try again.')
+      }
+      objectStore.put(next, `ws:${next.id}`)
+      await complete
+    } catch (error) {
+      try { objectStore.transaction.abort() } catch { /* Already aborted. */ }
+      await complete.catch(() => {})
+      throw error
+    }
+  })
+}

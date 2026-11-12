@@ -81,3 +81,16 @@ in order. **Skip for now** leaves an answer unresolved; saved decisions update s
 and advance the queue. Progress reports reviewed, skipped and remaining answers.
 Teacher-confirmed blanks stay resolved after reload. Skips are only for the current
 review session, so they reappear when the queue is started again.
+
+## Keeping only selected PDF pages
+
+For a multi-page worksheet, open **Manage PDF pages** in the editor. Each thumbnail
+has a checkbox and an **Only this page** button. Keep any subset in its original
+order, then choose **Keep selected pages**. At least one page is required. The PDF,
+page-code positions and answer items are updated together; items on excluded pages
+are removed. Undo restores the original PDF and layout during the editor visit.
+
+If the worksheet has already been printed or scanned, selected pages are saved as a
+new worksheet instead, with a fresh worksheet code and no scan/grade history. The
+original worksheet and results remain available, so earlier printed sheets still
+scan against their original pages. The original uploaded file on disk is unchanged.

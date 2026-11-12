@@ -652,3 +652,22 @@ footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
 .review-list li { margin: .6rem 0; }
 .review-list .tag { margin-left: .5rem; }
 .review-actions { margin-top: 1rem; }
+
+.page-manager { max-width: 960px; max-height: 88vh; overflow: auto; text-align: left; }
+.page-manager:focus { outline: none; }
+.page-manager h2 { margin: 0; }
+.page-pick-actions { margin: 1rem 0; }
+.pdf-page-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
+.pdf-page-option { border: 2px solid var(--line); border-radius: 10px; padding: .65rem; }
+.pdf-page-option.chosen { border-color: var(--ink); background: var(--hi-soft, var(--card)); }
+.pdf-page-option label { display: flex; flex-direction: column; gap: .35rem; cursor: pointer; }
+.pdf-page-option input { align-self: flex-start; }
+.pdf-page-option button { margin-top: .5rem; width: 100%; }
+.pdf-page-thumb { min-height: 130px; height: 180px; display: grid; place-items: center; background: #fff; }
+.pdf-page-thumb canvas { max-width: 100%; max-height: 180px; width: auto; height: auto; display: block; }
+.page-pick-footer { margin-top: 1.2rem; border-top: 1px solid var(--line); padding-top: .5rem; }
+
+@media (max-width: 600px) {
+  .toolbar .seg.tools { flex-wrap: wrap; max-width: 100%; }
+  .pdf-page-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
