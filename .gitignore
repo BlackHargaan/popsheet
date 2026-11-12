@@ -26,3 +26,7 @@ dist-ssr
 # local deliverables
 /popsheet-source.zip
 /sample-printout.pdf
+
+# Browser test output
+/test-results/
+/playwright-report/

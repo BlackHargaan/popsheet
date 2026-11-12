@@ -1,3 +1,5 @@
+import { editorItems, moveItems, snapItems } from '../core/editing'
+import { useHistory } from './useHistory'
 import { useEffect, useRef, useState } from 'react'
 import {
   BUBBLE_R,
@@ -35,7 +37,7 @@ function PageBackground({ pdf, page }: { pdf: Uint8Array; page: number }) {
   return <div ref={ref} className="page-bg" />
 }
 
-type Tool = 'bubbles' | 'box' | 'number'
+type Tool = 'select' | 'bubbles' | 'box' | 'number'
 interface Rect {
   x: number
   y: number
@@ -44,6 +46,7 @@ interface Rect {
 }
 
 type Drag =
+  | { kind: 'group'; ids: string[]; start: Worksheet; px: number; py: number; moved: boolean }
   | { kind: 'code'; offX: number; offY: number; moved: boolean }
   | { kind: 'q'; id: string; offX: number; offY: number; startX: number; startY: number; moved: boolean; bubble: number | null }
   | { kind: 'move-box' | 'resize-box'; id: string; start: Rect; px: number; py: number; moved: boolean }
@@ -54,27 +57,29 @@ type Drag =
 const MIN_BOX = 14
 
 export function Editor({ id }: { id: string }) {
-  const [ws, setWs] = useState<Worksheet | null | undefined>(undefined)
+  const history = useHistory<Worksheet>((next) => { void saveWorksheet(next) })
+  const ws = history.value
+  const setWs = history.set
   const [page, setPage] = useState(0)
-  const [tool, setTool] = useState<Tool>('bubbles')
+  const [tool, setTool] = useState<Tool>('select')
   const [choices, setChoices] = useState(4)
   const [dir, setDir] = useState<'h' | 'v'>('h')
   const [gridCols, setGridCols] = useState(3)
   const [gridDecimal, setGridDecimal] = useState(false)
   const [gridNegative, setGridNegative] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selection, setSelection] = useState<string[]>([])
+  const selected = selection[0] ?? null
+  const setSelected = (id: string | null) => setSelection(id ? [id] : [])
+  const [guides, setGuides] = useState<{ x?: number; y?: number }>({})
   const [draft, setDraft] = useState<Rect | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const drag = useRef<Drag | null>(null)
 
   useEffect(() => {
     void getWorksheet(id).then((w) => setWs(w ?? null))
-  }, [id])
+  }, [id, setWs])
 
-  const commit = (next: Worksheet) => {
-    setWs(next)
-    void saveWorksheet(next)
-  }
+  const commit = history.commit
 
   const removeItem = (itemId: string) => {
     if (!ws) return
@@ -90,8 +95,25 @@ export function Editor({ id }: { id: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
-      if (!ws || !selected || t.tagName === 'INPUT' || t.tagName === 'SELECT') return
-      if (e.key === 'Delete' || e.key === 'Backspace') removeItem(selected)
+      if (!ws || t.closest('input, select, textarea, [contenteditable="true"]')) return
+      if ((e.ctrlKey || e.metaKey) && ['z', 'y'].includes(e.key.toLowerCase())) {
+        e.preventDefault()
+        if (e.key.toLowerCase() === 'y' || e.shiftKey) history.redo(); else history.undo()
+        return
+      }
+      if (e.key === 'Escape') { history.cancel(); drag.current = null; setGuides({}); setDraft(null); setSelected(null); return }
+      if (!selection.length || drag.current) return
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        commit({ ...ws, questions: ws.questions.filter(q => !selection.includes(q.id)), boxes: ws.boxes?.filter(b => !selection.includes(b.id)), grids: ws.grids?.filter(g => !selection.includes(g.id)) })
+        setSelected(null)
+      }
+      const arrows: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
+      if (arrows[e.key]) {
+        e.preventDefault()
+        const [x, y] = arrows[e.key], step = e.shiftKey ? 10 : 1
+        commit(moveItems(ws, page, selection, x * step, y * step))
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -148,7 +170,7 @@ export function Editor({ id }: { id: string }) {
     for (let n = ws.questions.length + boxes.length + grids.length + 1; ; n++) if (!used.has(String(n))) return String(n)
   }
 
-  const selectedGrid = grids.find((g) => g.id === selected)
+  const selectedGrid = grids.find((g) => selection.includes(g.id))
   /** Toolbar choices set up the next grid, and change the selected one. */
   const gridOption = (change: Partial<Pick<NumberGrid, 'columns' | 'decimal' | 'negative'>>) => {
     if (change.columns !== undefined) setGridCols(change.columns)
@@ -165,6 +187,7 @@ export function Editor({ id }: { id: string }) {
 
   const onPageDown = (e: React.PointerEvent) => {
     const p = toPt(e)
+    if (tool === 'select') { setSelected(null); return }
     if (tool === 'box') {
       drag.current = { kind: 'draw', x0: p.x, y0: p.y }
       svgRef.current!.setPointerCapture(e.pointerId)
@@ -193,7 +216,29 @@ export function Editor({ id }: { id: string }) {
     setSelected(q.id)
   }
 
+  const startGroup = (e: React.PointerEvent, id: string) => {
+    e.stopPropagation()
+    if (e.shiftKey) { setSelection(selection.includes(id) ? selection.filter(i => i !== id) : [...selection, id]); return }
+    const ids = selection.includes(id) ? selection : [id]
+    setSelection(ids)
+    const p = toPt(e)
+    history.begin()
+    drag.current = { kind: 'group', ids, start: ws, px: p.x, py: p.y, moved: false }
+    svgRef.current!.setPointerCapture(e.pointerId)
+  }
+
+  const align = (axis: 'x' | 'y') => {
+    const all = editorItems(ws, page)
+    const items = selection.flatMap(id => all.filter(i => i.id === id))
+    if (items.length < 2) return
+    let next = ws
+    for (const item of items.slice(1)) next = moveItems(next, page, [item.id], axis === 'x' ? items[0].x - item.x : 0, axis === 'y' ? items[0].y - item.y : 0)
+    commit(next)
+  }
+
   const startDrag = (e: React.PointerEvent, q: Question, bubble: number | null) => {
+    if (tool === 'select') { startGroup(e, q.id); return }
+    history.begin()
     e.stopPropagation()
     const p = toPt(e)
     drag.current = { kind: 'q', id: q.id, offX: p.x - q.x, offY: p.y - q.y, startX: e.clientX, startY: e.clientY, moved: false, bubble }
@@ -202,6 +247,8 @@ export function Editor({ id }: { id: string }) {
   }
 
   const startGridDrag = (e: React.PointerEvent, g: NumberGrid) => {
+    if (tool === 'select') { startGroup(e, g.id); return }
+    history.begin()
     e.stopPropagation()
     const p = toPt(e)
     drag.current = { kind: 'grid', id: g.id, offX: p.x - g.x, offY: p.y - g.y, startX: e.clientX, startY: e.clientY, moved: false }
@@ -210,6 +257,8 @@ export function Editor({ id }: { id: string }) {
   }
 
   const startBoxDrag = (e: React.PointerEvent, b: AnswerBox, kind: 'move-box' | 'resize-box') => {
+    if (tool === 'select' && kind === 'move-box') { startGroup(e, b.id); return }
+    history.begin()
     e.stopPropagation()
     const p = toPt(e)
     drag.current = { kind, id: b.id, start: boxOnPage(b, size, ws.scale), px: p.x, py: p.y, moved: false }
@@ -221,6 +270,14 @@ export function Editor({ id }: { id: string }) {
     const d = drag.current
     if (!d) return
     const p = toPt(e)
+    if (d.kind === 'group') {
+      if (!d.moved && Math.hypot(p.x - d.px, p.y - d.py) < 2) return
+      d.moved = true
+      const snap = snapItems(d.start, page, d.ids, p.x - d.px, p.y - d.py)
+      setGuides(e.altKey ? {} : snap)
+      setWs(moveItems(d.start, page, d.ids, e.altKey ? p.x - d.px : snap.dx, e.altKey ? p.y - d.py : snap.dy))
+      return
+    }
     if (d.kind === 'code') {
       d.moved = true
       const pageCodes = [...(ws.pageCodes ?? [])]
@@ -262,6 +319,7 @@ export function Editor({ id }: { id: string }) {
     const d = drag.current
     if (!d) return
     drag.current = null
+    setGuides({})
     if (d.kind === 'draw') {
       const r = draft
       setDraft(null)
@@ -272,10 +330,11 @@ export function Editor({ id }: { id: string }) {
       return
     }
     if (d.kind === 'q' && !d.moved) {
+      history.cancel()
       if (d.bubble !== null) setAnswer(d.id, d.bubble)
       return
     }
-    if (d.moved) void saveWorksheet(ws)
+    if (d.moved) history.finish(); else history.cancel()
   }
 
   const patch = (qid: string, change: Partial<Question>) =>
@@ -308,7 +367,10 @@ export function Editor({ id }: { id: string }) {
           onChange={(e) => commit({ ...ws, name: e.target.value })}
         />
         <div className="toolbar panel">
+          <button disabled={!history.canUndo} onClick={history.undo} title="Undo (Ctrl/Cmd+Z)">Undo</button>
+          <button disabled={!history.canRedo} onClick={history.redo} title="Redo (Ctrl/Cmd+Shift+Z)">Redo</button>
           <div className="seg tools" role="group" aria-label="What clicking the page adds">
+            <button aria-pressed={tool === 'select'} onClick={() => setTool('select')}>Select</button>
             <button aria-pressed={tool === 'bubbles'} onClick={() => setTool('bubbles')} title="Multiple-choice bubbles, read by the scanner">
               <span className="tool-ic bub" aria-hidden="true" />
               Bubbles
@@ -323,7 +385,9 @@ export function Editor({ id }: { id: string }) {
             </button>
           </div>
           <span className="sep" />
-          {tool === 'bubbles' ? (
+          {tool === 'select' ? (
+            <div className="group"><span>{selection.length} selected</span><button disabled={selection.length < 2} onClick={() => align('x')}>Align left</button><button disabled={selection.length < 2} onClick={() => align('y')}>Align top</button></div>
+          ) : tool === 'bubbles' ? (
             <div className="group">
               <div className="seg" role="group" aria-label="Number of choices">
                 {[2, 3, 4, 5, 6].map((n) => (
@@ -376,18 +440,18 @@ export function Editor({ id }: { id: string }) {
           </label>
           {ws.pages.length > 1 && (
             <span className="pager">
-              <button disabled={page === 0} onClick={() => setPage(page - 1)} aria-label="Previous page">
+              <button disabled={page === 0} onClick={() => { setSelected(null); setPage(page - 1) }} aria-label="Previous page">
                 ‹
               </button>
               Page {page + 1} of {ws.pages.length}
-              <button disabled={page === ws.pages.length - 1} onClick={() => setPage(page + 1)} aria-label="Next page">
+              <button disabled={page === ws.pages.length - 1} onClick={() => { setSelected(null); setPage(page + 1) }} aria-label="Next page">
                 ›
               </button>
             </span>
           )}
         </div>
         <p className="hint">
-          {tool === 'bubbles' ? (
+          {tool === 'select' ? (<span>Click to select · Shift-click to select several · Drag to move · Arrow keys to nudge (Shift: 10 pt) · Alt-drag skips snapping</span>) : tool === 'bubbles' ? (
             <>
               <span>
                 <b>Click</b> the page to add a question
@@ -442,7 +506,7 @@ export function Editor({ id }: { id: string }) {
               viewBox={`0 0 ${size.width} ${size.height}`}
               onPointerMove={onMove}
               onPointerUp={onUp}
-              onPointerCancel={onUp}
+              onPointerCancel={() => { history.cancel(); drag.current = null; setDraft(null); setGuides({}) }}
             >
               <rect width={size.width} height={size.height} fill="transparent" onPointerDown={onPageDown} className="add-layer" />
               {fiducials(size).map((f, i) => (
@@ -450,6 +514,7 @@ export function Editor({ id }: { id: string }) {
               ))}
               <g className="page-code" onPointerDown={(e) => {
                 e.stopPropagation()
+                history.begin()
                 const p = toPt(e)
                 drag.current = { kind: 'code', offX: p.x - qr.x, offY: p.y - qr.y, moved: false }
                 svgRef.current!.setPointerCapture(e.pointerId)
@@ -463,13 +528,13 @@ export function Editor({ id }: { id: string }) {
                 </text>
               </g>
 
-              <g pointerEvents={tool === 'box' ? undefined : 'none'}>
+              <g pointerEvents={tool === 'box' || tool === 'select' ? undefined : 'none'}>
                 {boxes.map((b) => {
                   if (b.page !== page) return null
                   const r = boxOnPage(b, size, ws.scale)
                   const tag = `${b.label} · ${b.points} pt`
                   return (
-                    <g key={b.id} className={'abox' + (b.id === selected ? ' sel' : '')} onPointerDown={(e) => startBoxDrag(e, b, 'move-box')}>
+                    <g key={b.id} className={'abox' + (selection.includes(b.id) ? ' sel' : '')} onPointerDown={(e) => startBoxDrag(e, b, 'move-box')}>
                       <rect className="abox-area" x={r.x} y={r.y} width={r.width} height={r.height} rx="2" />
                       <g className="abox-tag">
                         <rect x={r.x} y={r.y - 11} width={tag.length * 4.1 + 10} height={11} rx="2" />
@@ -492,13 +557,13 @@ export function Editor({ id }: { id: string }) {
                 {draft && <rect className="abox-draft" x={draft.x} y={draft.y} width={draft.width} height={draft.height} rx="2" />}
               </g>
 
-              <g pointerEvents={tool === 'number' ? undefined : 'none'} opacity={tool === 'number' ? 1 : 0.55}>
+              <g pointerEvents={tool === 'number' || tool === 'select' ? undefined : 'none'} opacity={tool === 'number' || tool === 'select' ? 1 : 0.55}>
                 {grids.map((g) => {
                   if (g.page !== page) return null
                   const box = gridBox(g, 3)
                   const key = g.answer === null ? null : answerBubbles(g, g.answer)
                   return (
-                    <g key={g.id} className={'q grid' + (g.id === selected ? ' sel' : '')} onPointerDown={(e) => startGridDrag(e, g)}>
+                    <g key={g.id} className={'q grid' + (selection.includes(g.id) ? ' sel' : '')} onPointerDown={(e) => startGridDrag(e, g)}>
                       <rect className="q-box" x={box.x} y={box.y} width={box.width} height={box.height} rx="3" />
                       <text className="q-num" x={box.x + 4} y={box.y + 9}>
                         {g.label}
@@ -524,13 +589,13 @@ export function Editor({ id }: { id: string }) {
                 })}
               </g>
 
-              <g pointerEvents={tool === 'bubbles' ? undefined : 'none'} opacity={tool === 'bubbles' ? 1 : 0.55}>
+              <g pointerEvents={tool === 'bubbles' || tool === 'select' ? undefined : 'none'} opacity={tool === 'bubbles' || tool === 'select' ? 1 : 0.55}>
                 {ws.questions.map((q, n) => {
                   if (q.page !== page) return null
                   const box = questionBox(q, 3)
                   const first = bubbleCenter(q, 0)
                   return (
-                    <g key={q.id} className={'q' + (q.id === selected ? ' sel' : '')} onPointerDown={(e) => startDrag(e, q, null)}>
+                    <g key={q.id} className={'q' + (selection.includes(q.id) ? ' sel' : '')} onPointerDown={(e) => startDrag(e, q, null)}>
                       <rect
                         className="q-box"
                         x={box.x - (q.dir === 'h' ? 14 : 0)}
@@ -561,6 +626,10 @@ export function Editor({ id }: { id: string }) {
                     </g>
                   )
                 })}
+              </g>
+              <g pointerEvents="none" className="alignment-guides">
+                {guides.x !== undefined && <line x1={guides.x} x2={guides.x} y1={0} y2={size.height} />}
+                {guides.y !== undefined && <line y1={guides.y} y2={guides.y} x1={0} x2={size.width} />}
               </g>
             </svg>
           </div>
@@ -598,7 +667,7 @@ export function Editor({ id }: { id: string }) {
               </div>
               No questions yet.
               <br />
-              Click next to the first question on the page.
+              Choose Bubbles, then click next to the first question on the page.
             </div>
           )}
           {unkeyed > 0 && (
@@ -610,7 +679,7 @@ export function Editor({ id }: { id: string }) {
             {ws.questions.map((q, n) => (
               <li
                 key={q.id}
-                className={(q.id === selected ? 'sel' : '') + (q.answer === null ? ' unkeyed' : '')}
+                className={(selection.includes(q.id) ? 'sel' : '') + (q.answer === null ? ' unkeyed' : '')}
                 onClick={() => {
                   setSelected(q.id)
                   setPage(q.page)
@@ -673,7 +742,7 @@ export function Editor({ id }: { id: string }) {
                   return (
                     <li
                       key={g.id}
-                      className={(g.id === selected ? 'sel' : '') + (g.answer === null ? ' unkeyed' : '')}
+                      className={(selection.includes(g.id) ? 'sel' : '') + (g.answer === null ? ' unkeyed' : '')}
                       onClick={() => {
                         setSelected(g.id)
                         setPage(g.page)
@@ -742,7 +811,7 @@ export function Editor({ id }: { id: string }) {
                 {boxes.map((b) => (
                   <li
                     key={b.id}
-                    className={b.id === selected ? 'sel' : ''}
+                    className={selection.includes(b.id) ? 'sel' : ''}
                     onClick={() => {
                       setSelected(b.id)
                       setPage(b.page)

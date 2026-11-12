@@ -1,3 +1,4 @@
+import { Backup } from './Backup'
 import { useEffect, useRef, useState } from 'react'
 import { randomId } from '../core/layout'
 import { readPageSizes } from '../core/pdf'
@@ -122,6 +123,7 @@ export function Home() {
         }}
       />
 
+      <Backup onRestored={() => { void fetchItems().then(setItems) }} />
       {empty ? (
         <section className="hero panel">
           <div>

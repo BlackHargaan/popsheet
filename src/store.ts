@@ -1,4 +1,5 @@
-import { del, entries, get, set, update } from 'idb-keyval'
+import { encodeBackup, planRestore, isBackupKey } from './core/backup'
+import { createStore, promisifyRequest, del, entries, get, set, update } from 'idb-keyval'
 import type { BoxGrades, ClassRoom, Reading, Readings, ScanRecord, Worksheet } from './core/types'
 
 // Everything lives in this browser's own storage (IndexedDB). Nothing is sent anywhere.
@@ -103,4 +104,36 @@ export async function takenCodes(): Promise<Set<string>> {
   for (const c of await listClasses()) for (const s of c.students) taken.add(s.code)
   for (const w of await listWorksheets()) for (const e of w.extras) taken.add(e)
   return taken
+}
+
+/** Export all user records; model caches and app preferences are excluded. */
+export async function exportBackup() {
+  return encodeBackup(await entries<string, unknown>())
+}
+
+export async function restoreBackup(incoming: import('./core/backup').BackupEntry[], replace: boolean) {
+  // One transaction makes conflict checking, bundle replacement and writes atomic.
+  const store = createStore('keyval-store', 'keyval')
+  return store('readwrite', async objectStore => {
+    const complete = promisifyRequest(objectStore.transaction)
+    try {
+      const keys = await promisifyRequest(objectStore.getAllKeys())
+      const current = keys.filter((k): k is string => typeof k === 'string')
+      const planned = planRestore(incoming, current, replace)
+      if (replace) {
+        const ids = new Set(planned.filter(([k]) => k.startsWith('ws:')).map(([k]) => k.slice(3)))
+        for (const key of current) {
+          const [kind, id] = key.split(':')
+          if (isBackupKey(key) && kind !== 'class' && ids.has(id)) objectStore.delete(key)
+        }
+      }
+      for (const [key, value] of planned) objectStore.put(value, key)
+      await complete
+      return planned.length
+    } catch (error) {
+      try { objectStore.transaction.abort() } catch { /* The transaction may already have aborted. */ }
+      await complete.catch(() => {})
+      throw error
+    }
+  })
 }

@@ -635,3 +635,9 @@ footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
 .page-code { cursor: grab; }
 .page-code:active { cursor: grabbing; }
 .page-code:hover > rect:nth-of-type(2) { stroke: var(--accent, #555); stroke-width: 2; }
+
+.alignment-guides line { stroke: #c34b79; stroke-width: 1; stroke-dasharray: 4 3; }
+.tool-select .add-layer { cursor: default; }
+.backup-panel { padding: 20px; margin-bottom: 24px; }
+.backup-panel h2 { margin: 0; }
+.backup-preview { border-top: 1px solid #ddd; margin-top: 16px; padding-top: 8px; }
