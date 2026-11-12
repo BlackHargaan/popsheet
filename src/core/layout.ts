@@ -27,13 +27,14 @@ export function fiducials(p: PageSize): Pt[] {
 }
 
 /** Top-left corner of the page-code box. */
-export function qrBox(p: PageSize): Pt {
+export function qrBox(p: PageSize, position?: Pt | null): Pt {
+  if (position) return position
   return { x: p.width - FID_INSET - FID_SIZE / 2 - 10 - QR_BOX, y: 18 }
 }
 
 /** Corners (TL, TR, BR, BL) of the code's module area, given its module count. */
-export function qrModuleCorners(p: PageSize, modules: number): Pt[] {
-  const b = qrBox(p)
+export function qrModuleCorners(p: PageSize, modules: number, position?: Pt | null): Pt[] {
+  const b = qrBox(p, position)
   const m = QR_BOX / (modules + 2 * QR_QUIET_MODULES)
   const a = b.x + QR_QUIET_MODULES * m
   const t = b.y + QR_QUIET_MODULES * m

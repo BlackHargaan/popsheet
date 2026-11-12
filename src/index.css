@@ -631,3 +631,7 @@ footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
   .install-btn span { display: none; }
   .install-btn { padding: 0.4rem 0.5rem; }
 }
+
+.page-code { cursor: grab; }
+.page-code:active { cursor: grabbing; }
+.page-code:hover > rect:nth-of-type(2) { stroke: var(--accent, #555); stroke-width: 2; }

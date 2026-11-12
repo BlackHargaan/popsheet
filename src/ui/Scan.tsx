@@ -35,13 +35,14 @@ async function readOne(img: ScanImage): Promise<{ detail: string; worksheet: Wor
       }
       const questions = layout.questions.filter((q) => q.page === page.page)
       const grids = layout.grids.filter((g) => g.page === page.page)
-      const marks = page.read(size, questions)
+      const position = layout.pageCodes?.[page.page]
+      const marks = page.read(size, questions, true, position)
       // Number grids are read on their own, so their many empty bubbles don't shift what "empty" means
       // for the multiple-choice questions.
-      if (grids.length) Object.assign(marks, page.read(size, grids.flatMap(gridQuestions), false))
+      if (grids.length) Object.assign(marks, page.read(size, grids.flatMap(gridQuestions), false, position))
       // Keep a straightened copy of the page (on this device only) so written answers can be cropped and
       // graded, including from answer boxes drawn after scanning.
-      const image = await grayToBlob(page.straighten(size, SCAN_PPP))
+      const image = await grayToBlob(page.straighten(size, SCAN_PPP, position))
       await saveScan({
         worksheetId: ws.id,
         studentCode: page.studentCode,

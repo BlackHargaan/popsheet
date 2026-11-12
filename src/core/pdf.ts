@@ -68,7 +68,7 @@ function drawMarks(
   }
 
   // Page code
-  const box = qrBox(size)
+  const box = qrBox(size, ws.pageCodes?.[pageIndex])
   const qr = qrMatrix(encodePageCode(ws.id, pageIndex, version, copy.code))
   const m = QR_BOX / (qr.size + 2 * QR_QUIET_MODULES)
   page.drawRectangle({ x: box.x, y: H - box.y - QR_BOX, width: QR_BOX, height: QR_BOX, color: white })
@@ -92,7 +92,7 @@ function drawMarks(
     const fs = i === 0 ? 10 : 7
     const safe = [...text].filter((ch) => ch.charCodeAt(0) < 256).join('')
     const w = f.widthOfTextAtSize(safe, fs)
-    const tx = box.x - 6 - w
+    const tx = box.x >= w + 9 ? box.x - 6 - w : Math.min(size.width - w - 3, box.x + QR_BOX + 6)
     const ty = H - (box.y + 22 + i * 11)
     page.drawRectangle({ x: tx - 3, y: ty - 3, width: w + 6, height: fs + 5, color: white })
     page.drawText(safe, { x: tx, y: ty, size: fs, font: f, color: black })

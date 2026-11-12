@@ -72,6 +72,19 @@ describe('printed versions', () => {
     expect(versionForPrint({ ...ws, scale: 0.85 }).version).toBe(2)
   })
 
+  it('versions moved page codes and preserves their old positions', () => {
+    const first = versionForPrint(base).ws
+    const moved = { ...first, pageCodes: [{ x: 120, y: 300 }] }
+    expect(changedSincePrint(moved)).toBe(true)
+    const second = versionForPrint(moved)
+    expect(second.version).toBe(2)
+    expect(layoutForScan(second.ws, 1)!.pageCodes![0]).toEqual({ x: 517, y: 18 })
+    expect(layoutForScan(second.ws, 2)!.pageCodes![0]).toEqual({ x: 120, y: 300 })
+    const legacy = { ...first, printed: first.printed!.map((layout) => ({ ...layout, pageCodes: undefined })) }
+    expect(changedSincePrint(legacy)).toBe(false)
+    expect(changedSincePrint({ ...legacy, pageCodes: moved.pageCodes })).toBe(true)
+  })
+
   it('reads old sheets with the layout they were printed with', () => {
     const v1 = versionForPrint(base).ws
     const v2 = versionForPrint({ ...v1, scale: 0.85, questions: [q('Q1', 450), q('Q2', 420)] }).ws

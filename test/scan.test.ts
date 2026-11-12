@@ -75,6 +75,19 @@ function expectAll(marks: ReturnType<typeof read>, expected: (number | null)[]) 
 }
 
 describe('scanner', () => {
+  it('aligns a sheet with a relocated page code', async () => {
+    const moved = { ...ws, pageCodes: [{ x: 90, y: 650 }] }
+    const pdf = await buildPrintable(moved, [{ code: 'AB2C', label: 'Test Student' }], 1)
+    const dir = mkdtempSync(join(tmpdir(), 'popsheet-moved-'))
+    writeFileSync(join(dir, 'in.pdf'), pdf)
+    execFileSync('pdftoppm', ['-r', String(DPI), '-png', '-singlefile', join(dir, 'in.pdf'), join(dir, 'out')])
+    const image = PNG.sync.read(readFileSync(join(dir, 'out.png')))
+    const page = locatePage({ data: new Uint8ClampedArray(image.data), width: image.width, height: image.height })
+    const marks = page.read(ws.pages[0], ws.questions, true, moved.pageCodes[0])
+    expect(Object.values(marks).every((m) => m.status === 'blank')).toBe(true)
+    expect(page.straighten(ws.pages[0], 1, moved.pageCodes[0]).width).toBe(ws.pages[0].width)
+  })
+
   it('reads a flat scan', () => {
     const img = fillBubbles(allFilled)
     const marks = read({ data: new Uint8ClampedArray(img.data), width: img.width, height: img.height })

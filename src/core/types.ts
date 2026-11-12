@@ -68,6 +68,8 @@ export interface PrintedLayout {
   version: number
   printedAt: number
   scale: number
+  /** Page-code top-left positions, indexed by page; missing entries use the default. */
+  pageCodes?: ({ x: number; y: number } | null)[]
   questions: Pick<Question, 'id' | 'page' | 'x' | 'y' | 'choices' | 'dir'>[]
   /** Missing on layouts printed before number grids existed. */
   grids?: GridGeometry[]
@@ -83,6 +85,8 @@ export interface Worksheet {
   pages: PageSize[]
   /** How much the original page is shrunk to leave room for the marks (1 = not at all). */
   scale: number
+  /** Page-code top-left positions, indexed by page; missing entries use the default. */
+  pageCodes?: ({ x: number; y: number } | null)[]
   questions: Question[]
   /** Codes of spare copies that are not tied to a student. */
   extras: string[]

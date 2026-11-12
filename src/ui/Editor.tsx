@@ -44,6 +44,7 @@ interface Rect {
 }
 
 type Drag =
+  | { kind: 'code'; offX: number; offY: number; moved: boolean }
   | { kind: 'q'; id: string; offX: number; offY: number; startX: number; startY: number; moved: boolean; bubble: number | null }
   | { kind: 'move-box' | 'resize-box'; id: string; start: Rect; px: number; py: number; moved: boolean }
   | { kind: 'draw'; x0: number; y0: number }
@@ -220,6 +221,13 @@ export function Editor({ id }: { id: string }) {
     const d = drag.current
     if (!d) return
     const p = toPt(e)
+    if (d.kind === 'code') {
+      d.moved = true
+      const pageCodes = [...(ws.pageCodes ?? [])]
+      pageCodes[page] = { x: Math.max(48, Math.min(size.width - QR_BOX - 48, p.x - d.offX)), y: Math.max(18, Math.min(size.height - QR_BOX - 18, p.y - d.offY)) }
+      setWs({ ...ws, pageCodes })
+      return
+    }
     if (d.kind === 'draw') {
       setDraft({ x: Math.min(d.x0, p.x), y: Math.min(d.y0, p.y), width: Math.abs(p.x - d.x0), height: Math.abs(p.y - d.y0) })
       return
@@ -278,7 +286,7 @@ export function Editor({ id }: { id: string }) {
     commit({ ...ws, boxes: boxes.map((b) => (b.id === bid ? { ...b, ...change } : b)) })
   const setAnswer = (qid: string, answer: number) => patch(qid, { answer })
 
-  const qr = qrBox(size)
+  const qr = qrBox(size, ws.pageCodes?.[page])
   const unkeyed = ws.questions.filter((q) => q.answer === null).length
   const keyed = ws.questions.length - unkeyed
   const totalPts =
@@ -413,7 +421,7 @@ export function Editor({ id }: { id: string }) {
             </>
           )}
           <span>
-            <kbd>Del</kbd> removes the selected one
+            Drag the page code to move it. <kbd>Del</kbd> removes the selected one
           </span>
         </p>
         <div className="desk">
@@ -440,7 +448,15 @@ export function Editor({ id }: { id: string }) {
               {fiducials(size).map((f, i) => (
                 <rect key={i} x={f.x - FID_SIZE / 2} y={f.y - FID_SIZE / 2} width={FID_SIZE} height={FID_SIZE} />
               ))}
-              <g pointerEvents="none">
+              <g className="page-code" onPointerDown={(e) => {
+                e.stopPropagation()
+                const p = toPt(e)
+                drag.current = { kind: 'code', offX: p.x - qr.x, offY: p.y - qr.y, moved: false }
+                svgRef.current!.setPointerCapture(e.pointerId)
+                setSelected(null)
+              }}>
+                <title>Drag to move the page code</title>
+                <rect x={qr.x} y={qr.y} width={QR_BOX} height={QR_BOX} fill="transparent" />
                 <rect x={qr.x + 3} y={qr.y + 3} width={QR_BOX - 6} height={QR_BOX - 6} fill="#fff" stroke="#111" strokeDasharray="3 2" />
                 <text x={qr.x + QR_BOX / 2} y={qr.y + QR_BOX / 2 + 2} textAnchor="middle" fontSize="6.5">
                   page code

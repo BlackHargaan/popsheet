@@ -229,12 +229,12 @@ export interface PageRead extends PageCode {
    * Reads the bubbles once the caller has looked the worksheet up. `crops` keeps a small picture of each
    * question for review; number grid columns skip it (the stored page image covers them).
    */
-  read(size: PageSize, questions: Question[], crops?: boolean): Record<string, Mark>
+  read(size: PageSize, questions: Question[], crops?: boolean, position?: Pt | null): Record<string, Mark>
   /**
    * The whole page, straightened and flattened to page coordinates at `ppp` pixels per point
    * (greyscale), so any region of it can be cropped later.
    */
-  straighten(size: PageSize, ppp: number): GrayImage
+  straighten(size: PageSize, ppp: number, position?: Pt | null): GrayImage
 }
 
 export interface GrayImage {
@@ -346,15 +346,15 @@ export function locatePage(img: Rgba): PageRead {
   const gray = toGray(img)
   // Lining the page up is the slow part; do it once per page size.
   const aligned = new Map<string, Homography>()
-  const homography = (size: PageSize) => {
-    const k = `${size.width}x${size.height}`
-    if (!aligned.has(k)) aligned.set(k, align(gray, size, qrImg, modules))
+  const homography = (size: PageSize, position?: Pt | null) => {
+    const k = `${size.width}x${size.height}:${position?.x},${position?.y}`
+    if (!aligned.has(k)) aligned.set(k, align(gray, size, qrImg, modules, position))
     return aligned.get(k)!
   }
   return {
     ...parsed,
-    read: (size, questions, crops = true) => readBubbles(gray, homography(size), questions, crops),
-    straighten: (size, ppp) => straighten(gray, homography(size), size, ppp),
+    read: (size, questions, crops = true, position) => readBubbles(gray, homography(size, position), questions, crops),
+    straighten: (size, ppp, position) => straighten(gray, homography(size, position), size, ppp),
   }
 }
 
@@ -371,8 +371,8 @@ function straighten(g: Gray, h: Homography, size: PageSize, ppp: number): GrayIm
   return { width, height, data }
 }
 
-function align(g: Gray, size: PageSize, qrImg: Pt[], modules: number): Homography {
-  const qrPage = qrModuleCorners(size, modules)
+function align(g: Gray, size: PageSize, qrImg: Pt[], modules: number, position?: Pt | null): Homography {
+  const qrPage = qrModuleCorners(size, modules, position)
   const sim = fitSimilarity(qrPage, qrImg)
   const side = FID_SIZE * sim.scale
   const [tl, tr, br, bl] = fiducials(size)
