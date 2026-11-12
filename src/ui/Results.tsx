@@ -1,6 +1,9 @@
+import { reviewKey, reviewReason, reviewTargets } from '../core/review'
+import type { ReviewFilter } from '../core/review'
 import { useEffect, useRef, useState } from 'react'
 import { boxesOf, buildRows, finalChoice, gridRight, gridsOf, itemStats, needsReview, toCsv } from '../core/grade'
 import type { StudentRow } from '../core/grade'
+import { layoutForScan } from '../core/versions'
 import { gridBox, parseNumber, sameNumber } from '../core/grids'
 import { LETTERS } from '../core/types'
 import type { AnswerBox, BoxGrades, ClassRoom, Mark, NumberGrid, Question, ScanRecord, Worksheet } from '../core/types'
@@ -30,12 +33,13 @@ interface Target {
 }
 
 /** A number grid cut out of the stored page image, for checking what the student wrote and bubbled. */
-function GridCrop({ rec, grid }: { rec: ScanRecord | undefined; grid: NumberGrid }) {
+function GridCrop({ rec, grid, ws }: { rec: ScanRecord | undefined; grid: NumberGrid; ws: Worksheet }) {
   const ref = useRef<HTMLCanvasElement>(null)
   useEffect(() => {
     if (!rec?.image || !rec.ppp) return
     let live = true
-    void cropScan(rec.image, rec.ppp, gridBox(grid, 6)).then((bmp) => {
+    const geometry = layoutForScan(ws, rec.version ?? null)?.grids.find(g => g.id === grid.id) ?? grid
+    void cropScan(rec.image, rec.ppp, gridBox(geometry, 6)).then((bmp) => {
       const c = ref.current
       if (!live || !c) return bmp.close()
       c.width = bmp.width
@@ -46,19 +50,9 @@ function GridCrop({ rec, grid }: { rec: ScanRecord | undefined; grid: NumberGrid
     return () => {
       live = false
     }
-  }, [rec, grid])
+  }, [rec, grid, ws])
   if (!rec?.image) return null
   return <canvas ref={ref} className="crop grid-crop" />
-}
-
-/** Every answer the scanner wasn't sure about, in table order. */
-function flaggedOf(ws: Worksheet, rows: StudentRow[]): Target[] {
-  return rows.flatMap((r) => [
-    ...ws.questions.filter((q) => needsReview(r.marks[q.id])).map((q) => ({ code: r.code, qid: q.id })),
-    ...gridsOf(ws)
-      .filter((g) => r.numbers[g.id]?.status === 'review')
-      .map((g) => ({ code: r.code, qid: g.id })),
-  ])
 }
 
 export function Results({ id }: { id: string }) {
@@ -68,6 +62,14 @@ export function Results({ id }: { id: string }) {
   const [grades, setGrades] = useState<BoxGrades>({})
   const [target, setTarget] = useState<Target | null>(null)
   const [queue, setQueue] = useState(false)
+  const [filter, setFilter] = useState<ReviewFilter>('all')
+  const [skipped, setSkipped] = useState<string[]>([])
+  const [reviewed, setReviewed] = useState(0)
+  const [queueTotal, setQueueTotal] = useState(0)
+  const [reviewMessage, setReviewMessage] = useState('')
+  const [reviewError, setReviewError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const saveLock = useRef(false)
 
   const load = async () => {
     setWs((await getWorksheet(id)) ?? null)
@@ -81,38 +83,59 @@ export function Results({ id }: { id: string }) {
   }, [id])
 
   const rows = ws ? buildRows(ws, scans, classes, grades) : []
-  const flaggedList = ws ? flaggedOf(ws, rows) : []
+  const allFlagged = ws ? reviewTargets(ws, rows) : []
+  const flaggedList = ws ? reviewTargets(ws, rows, filter) : []
+  const pending = flaggedList.filter(t => !skipped.includes(reviewKey(t)))
+  const progress = queue ? `${reviewed} reviewed · ${skipped.length} skipped · ${pending.length} remaining of ${queueTotal}` : null
+  const startQueue = () => {
+    setSkipped([]); setReviewed(0); setQueueTotal(flaggedList.length)
+    setReviewMessage(''); setReviewError(''); setQueue(true); setTarget(flaggedList[0] ?? null)
+  }
+  const skip = () => {
+    if (!target || saving) return
+    const nextSkipped = [...skipped, reviewKey(target)]
+    setSkipped(nextSkipped)
+    const next = flaggedList.find(t => !nextSkipped.includes(reviewKey(t)))
+    setTarget(next ?? null)
+    if (!next) { setQueue(false); setReviewMessage(`Reviewed ${reviewed} answers. ${nextSkipped.length} skipped for now; they remain in the review queue.`) }
+  }
 
   /** After a correction: on to the next flagged answer when working through the queue, else close. */
   const afterDecision = async () => {
     const fresh = await listScans(id)
     setScans(fresh)
     if (queue && ws) {
-      const next = flaggedOf(ws, buildRows(ws, fresh, classes, grades))[0]
+      const next = reviewTargets(ws, buildRows(ws, fresh, classes, grades), filter).find(t => !skipped.includes(reviewKey(t)))
+      setReviewed(n => n + 1)
       setTarget(next ?? null)
-      if (!next) setQueue(false)
+      if (!next) { setQueue(false); setReviewMessage(`Reviewed ${reviewed + 1} answers.${skipped.length ? ` ${skipped.length} skipped for now; they remain in the review queue.` : ' Review complete.'}`) }
     } else setTarget(null)
   }
 
-  const decide = async (t: Target, q: Question, choice: number | null) => {
-    const rec = await getScan(id, t.code, q.page)
-    if (!rec || !rec.marks[q.id]) return
-    rec.marks[q.id] = { ...rec.marks[q.id], override: choice }
-    await saveScan(rec)
-    await afterDecision()
+  const saveDecision = async (action: () => Promise<void>) => {
+    if (saveLock.current) return
+    saveLock.current = true; setSaving(true); setReviewError('')
+    try { await action(); await afterDecision() }
+    catch { setReviewError('Could not save this correction. Please try again.') }
+    finally { saveLock.current = false; setSaving(false) }
   }
 
-  /** Sets what a student answered in a number grid (null = no answer, undefined = back to the scanner's reading). */
-  const decideNumber = async (t: Target, g: NumberGrid, value: string | null | undefined) => {
+  const decide = (t: Target, q: Question, choice: number | null) => saveDecision(async () => {
+    const rec = await getScan(id, t.code, q.page)
+    if (!rec || !rec.marks[q.id]) throw new Error('Missing scan')
+    rec.marks[q.id] = { ...rec.marks[q.id], override: choice }
+    await saveScan(rec)
+  })
+
+  const decideNumber = (t: Target, g: NumberGrid, value: string | null | undefined) => saveDecision(async () => {
     const rec = await getScan(id, t.code, g.page)
-    if (!rec) return
+    if (!rec) throw new Error('Missing scan')
     const numbers = { ...rec.numbers }
     if (value === undefined) delete numbers[g.id]
     else numbers[g.id] = value
     rec.numbers = numbers
     await saveScan(rec)
-    await afterDecision()
-  }
+  })
 
   const row = target && rows.find((r) => r.code === target.code)
   const question = target && ws?.questions.find((q) => q.id === target.qid)
@@ -123,13 +146,15 @@ export function Results({ id }: { id: string }) {
     if (!target || !question) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        if (saving) return
         setTarget(null)
         setQueue(false)
         return
       }
       const i = LETTERS.indexOf(e.key.toUpperCase())
+      if (saving || (e.target as HTMLElement).closest('input, textarea, select')) return
       if (e.key.length === 1 && i >= 0 && i < question.choices) void decide(target, question, i)
-      else if (e.key === '0' || e.key === ' ') {
+      else if (e.key === '0' || (e.key === ' ' && (e.target as HTMLElement).tagName !== 'BUTTON')) {
         e.preventDefault()
         void decide(target, question, null)
       }
@@ -235,13 +260,27 @@ export function Results({ id }: { id: string }) {
             </a>
           )}
           {flaggedList.length > 0 && (
-            <button className="hi" onClick={() => { setQueue(true); setTarget(flaggedList[0]) }}>
+            <button className="hi" onClick={startQueue}>
               Check {flaggedList.length} flagged answer{flaggedList.length === 1 ? '' : 's'}
             </button>
           )}
         </div>
       </div>
 
+      {rows.length > 0 && <section className="panel pad review-queue" aria-label="Scan review queue">
+        <div className="row between"><div><h2>Scan review queue</h2><p>{allFlagged.length} answers need a check. Confirm the answer or skip it for now.</p></div>
+          <label className="group">Show <select aria-label="Review filter" value={filter} onChange={e => { setFilter(e.target.value as ReviewFilter); setSkipped([]); setReviewMessage('') }}>
+            <option value="all">All flagged answers</option>
+            {(['unsure', 'multi', 'blank', 'number'] as const).map(reason => <option key={reason} value={reason}>{reviewReason[reason]} ({allFlagged.filter(t => t.reason === reason).length})</option>)}
+          </select></label>
+          <button className="primary" disabled={!flaggedList.length} onClick={startQueue}>Review {flaggedList.length} answers</button>
+        </div>
+        {reviewMessage && <p role="status">{reviewMessage}</p>}
+        {flaggedList.length > 0 && <details><summary>See answers to review</summary><ul className="review-list">{flaggedList.map(t => <li key={reviewKey(t)}>
+          <button className="link" onClick={() => { setQueue(false); setReviewError(''); setTarget(t) }}>{rows.find(r => r.code === t.code)?.name} · {t.label} · Page {t.page + 1}</button><span className="tag">{reviewReason[t.reason]}</span>
+        </li>)}</ul></details>}
+        {!allFlagged.length && <p>No scan answers need review.</p>}
+      </section>}
       {rows.length === 0 ? (
         <div className="panel empty-state">
           <div className="ill" aria-hidden="true">
@@ -282,12 +321,12 @@ export function Results({ id }: { id: string }) {
                 <span>100%</span>
               </div>
             </div>
-            {flaggedList.length > 0 || ungraded > 0 ? (
+            {allFlagged.length > 0 || ungraded > 0 ? (
               <div className="panel stat-tile alert">
-                <div className="v">{flaggedList.length + ungraded}</div>
+                <div className="v">{allFlagged.length + ungraded}</div>
                 <div className="k">
                   {[
-                    flaggedList.length > 0 && `${flaggedList.length} mark${flaggedList.length === 1 ? '' : 's'} to check`,
+                    allFlagged.length > 0 && `${allFlagged.length} mark${allFlagged.length === 1 ? '' : 's'} to check`,
                     ungraded > 0 && `${ungraded} to grade`,
                   ]
                     .filter(Boolean)
@@ -453,9 +492,13 @@ export function Results({ id }: { id: string }) {
           key={target.code + grid.id}
           name={row.name}
           grid={grid}
+          ws={ws}
           read={row.numbers[grid.id]}
           rec={scans.find((s) => s.studentCode === row.code && s.page === grid.page)}
-          left={queue ? flaggedList.length : null}
+          progress={progress}
+          saving={saving}
+          error={reviewError}
+          onSkip={queue ? skip : undefined}
           onDecide={(v) => void decideNumber(target, grid, v)}
           onClose={() => {
             setTarget(null)
@@ -465,27 +508,29 @@ export function Results({ id }: { id: string }) {
       )}
 
       {target && row && question && mark && (
-        <div className="modal-back" onClick={() => { setTarget(null); setQueue(false) }}>
-          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-back" onClick={() => { if (!saving) { setTarget(null); setQueue(false) } }}>
+          <div className="modal" role="dialog" aria-modal="true" aria-label="Review answer" onClick={(e) => e.stopPropagation()}>
             <div className="crumbs">
               <b>{row.name}</b>
               <span>Question {ws.questions.indexOf(question) + 1}</span>
-              {queue && <span className="left">{flaggedList.length} left</span>}
+              {progress && <span className="left">{progress}</span>}
             </div>
             <h2>
               {mark.status === 'multi' ? 'More than one bubble looks filled' : mark.status === 'blank' ? 'No bubble looks filled' : mark.status === 'unsure' ? 'This mark is hard to read' : 'What did the student answer?'}
             </h2>
-            {mark.crop && <Crop crop={mark.crop} />}
+            {mark.crop ? <Crop crop={mark.crop} /> : <p className="muted small">No answer image is stored for this scan. Check the student’s sheet before confirming.</p>}
             <div className="row center keys">
               {Array.from({ length: question.choices }, (_, i) => (
-                <button key={i} className={'letter big' + (!needsReview(mark) && finalChoice(mark) === i ? ' on' : '')} onClick={() => void decide(target, question, i)}>
+                <button key={i} disabled={saving} className={'letter big' + (!needsReview(mark) && finalChoice(mark) === i ? ' on' : '')} onClick={() => void decide(target, question, i)}>
                   {LETTERS[i]}
                 </button>
               ))}
-              <button className={'big' + (!needsReview(mark) && finalChoice(mark) === null ? ' on' : '')} onClick={() => void decide(target, question, null)}>
+              <button disabled={saving} className={'big' + (!needsReview(mark) && finalChoice(mark) === null ? ' on' : '')} onClick={() => void decide(target, question, null)}>
                 No answer
               </button>
             </div>
+            {reviewError && <p className="error" role="alert">{reviewError}</p>}
+            <div className="row center review-actions">{queue && <button disabled={saving} onClick={skip}>Skip for now</button>}<button disabled={saving} onClick={() => { if (!saving) { setTarget(null); setQueue(false) } }}>Close review</button></div>
             <p className="muted small" style={{ marginTop: '1rem' }}>
               Press <kbd>A</kbd>–<kbd>{LETTERS[question.choices - 1]}</kbd>, <kbd>0</kbd> for no answer, <kbd>Esc</kbd> to close.
             </p>
@@ -499,42 +544,51 @@ export function Results({ id }: { id: string }) {
 function NumberReview({
   name,
   grid,
+  ws,
   read,
   rec,
-  left,
+  progress,
+  saving,
+  error,
+  onSkip,
   onDecide,
   onClose,
 }: {
   name: string
   grid: NumberGrid
+  ws: Worksheet
   read: StudentRow['numbers'][string] | undefined
   rec: ScanRecord | undefined
-  left: number | null
+  progress: string | null
+  saving: boolean
+  error: string
+  onSkip?: () => void
   onDecide: (value: string | null | undefined) => void
   onClose: () => void
 }) {
   const [value, setValue] = useState(read?.text ?? '')
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !saving && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   })
   const valid = value.trim() === '' || parseNumber(value) !== null
   return (
-    <div className="modal-back" onClick={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-back" onClick={() => { if (!saving) onClose() }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label="Review number answer" onClick={(e) => e.stopPropagation()}>
         <div className="crumbs">
           <b>{name}</b>
           <span>Question {grid.label}</span>
-          {left !== null && <span className="left">{left} left</span>}
+          {progress && <span className="left">{progress}</span>}
         </div>
         <h2>{read?.status === 'review' ? 'This number is hard to read' : 'What number did the student answer?'}</h2>
-        <GridCrop rec={rec} grid={grid} />
+        <GridCrop rec={rec} grid={grid} ws={ws} />
+        {!rec?.image && <p className="muted small">No page image is stored for this scan. Check the student’s sheet before confirming.</p>}
         <form
           className="row center keys"
           onSubmit={(e) => {
             e.preventDefault()
-            if (valid) onDecide(value.trim() === '' ? null : value.trim())
+            if (valid && !saving) onDecide(value.trim() === '' ? null : value.trim())
           }}
         >
           <input
@@ -545,18 +599,20 @@ function NumberReview({
             aria-label="The student's answer"
             onChange={(e) => setValue(e.target.value)}
           />
-          <button className="primary big" type="submit" disabled={!valid}>
+          <button className="primary big" type="submit" disabled={!valid || saving}>
             Save
           </button>
-          <button className="big" type="button" onClick={() => onDecide(null)}>
+          <button className="big" type="button" disabled={saving} onClick={() => onDecide(null)}>
             No answer
           </button>
         </form>
+        {error && <p className="error" role="alert">{error}</p>}
+        <div className="row center review-actions">{onSkip && <button disabled={saving} onClick={onSkip}>Skip for now</button>}<button disabled={saving} onClick={onClose}>Close review</button></div>
         <p className="muted small" style={{ marginTop: '1rem' }}>
           {read?.overridden ? (
             <>
               You corrected this.{' '}
-              <button className="link" onClick={() => onDecide(undefined)}>
+              <button className="link" disabled={saving} onClick={() => onDecide(undefined)}>
                 Use the scanner's reading again
               </button>
             </>

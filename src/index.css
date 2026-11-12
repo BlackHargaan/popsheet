@@ -641,3 +641,14 @@ footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
 .backup-panel { padding: 20px; margin-bottom: 24px; }
 .backup-panel h2 { margin: 0; }
 .backup-preview { border-top: 1px solid #ddd; margin-top: 16px; padding-top: 8px; }
+
+.layout-check, .print-preview, .review-queue { margin-bottom: 1.4rem; }
+.layout-check h2, .print-preview h2, .review-queue h2 { margin: 0; }
+.layout-check li { margin-bottom: .5rem; }
+.print-preview-page { max-width: 620px; margin: 1rem auto 0; background: white; box-shadow: var(--shadow); }
+.print-preview-page canvas { display: block; width: 100%; height: auto; }
+.duplicate-tools input { width: 4.5rem; }
+.review-list { max-height: 260px; overflow: auto; padding-left: 1.2rem; }
+.review-list li { margin: .6rem 0; }
+.review-list .tag { margin-left: .5rem; }
+.review-actions { margin-top: 1rem; }

@@ -1,3 +1,5 @@
+import { layoutWarnings } from '../core/layoutWarnings'
+import { PrintPreview } from './PrintPreview'
 import { useEffect, useState } from 'react'
 import { randomId } from '../core/layout'
 import { buildPrintable } from '../core/pdf'
@@ -16,6 +18,9 @@ export function Print({ id }: { id: string }) {
   const [spares, setSpares] = useState(2)
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState('')
+  const [error, setError] = useState('')
+  const [previewPage, setPreviewPage] = useState(0)
+  const [covered, setCovered] = useState<number[] | null>(null)
 
   useEffect(() => {
     void getWorksheet(id).then((w) => setWs(w ?? null))
@@ -36,9 +41,14 @@ export function Print({ id }: { id: string }) {
   const unkeyed = ws.questions.filter((q) => q.answer === null).length + grids.filter((g) => g.answer === null).length
   const items = ws.questions.length + grids.length + (ws.boxes ?? []).length
 
+  const warnings = [...layoutWarnings(ws), ...(covered ?? []).map(page => ({ page, ids: ['page-code'], message: 'Page code covers text or artwork on the original worksheet. Move it to a clear space.' }))]
+  const firstStudent = cls?.students[0]
+  const previewCopy = { code: firstStudent?.code ?? 'PREVIEW', label: firstStudent ? (names ? firstStudent.name : '') : 'Spare copy' }
+
   const make = async () => {
     setBusy(true)
     setDone('')
+    setError('')
     try {
       const copies: Copy[] = (cls?.students ?? []).map((s) => ({ code: s.code, label: names ? s.name : '' }))
       const taken = await takenCodes()
@@ -51,11 +61,13 @@ export function Print({ id }: { id: string }) {
       }
       // Records this print's bubble layout (or reuses the last one) so these sheets are always read correctly.
       const { ws: next, version } = versionForPrint({ ...ws, extras: [...ws.extras, ...extras] })
+      const pdf = await buildPrintable(next, copies, version)
       await saveWorksheet(next)
       setWs(next)
-      const pdf = await buildPrintable(next, copies, version)
       download(`${ws.name} - bubble sheets.pdf`, pdf as BlobPart, 'application/pdf')
       setDone(`Made ${copies.length} cop${copies.length === 1 ? 'y' : 'ies'} (${copies.length * ws.pages.length} pages). Check your downloads.`)
+    } catch {
+      setError('Could not make the printable PDF. Please try again.')
     } finally {
       setBusy(false)
     }
@@ -76,6 +88,14 @@ export function Print({ id }: { id: string }) {
         </div>
       </div>
 
+      <section className="panel pad layout-check" aria-label="Layout check">
+        <h2>Layout check</h2>
+        {covered === null && <p className="small muted" role="status">Checking the original worksheet for content under the page code...</p>}
+        {warnings.length ? <><p className="warn">{warnings.length} possible layout issue{warnings.length === 1 ? '' : 's'} to check before printing.</p>
+          <ul>{warnings.map((warning, i) => <li key={i}><button className="link" onClick={() => setPreviewPage(warning.page)}>Page {warning.page + 1}</button>: {warning.message}</li>)}</ul>
+          <a href={`#/w/${ws.id}`}>Fix the layout in the editor</a></> : <p>No overlaps or edge issues found. Check the preview for anything covering worksheet content.</p>}
+      </section>
+      <PrintPreview ws={ws} copy={previewCopy} page={previewPage} setPage={setPreviewPage} onCovered={setCovered} />
       <div className="print-grid">
         <div>
           {items === 0 && <p className="warn">This worksheet has no questions yet, so there is nothing to grade.</p>}
@@ -197,6 +217,7 @@ export function Print({ id }: { id: string }) {
           <button className="primary" disabled={busy || total === 0} onClick={() => void make()}>
             {busy ? 'Making PDF…' : 'Download PDF'}
           </button>
+          {error && <p className="error" role="alert">{error}</p>}
           {done && <p className="notice" style={{ marginTop: '0.8rem' }}>{done}</p>}
         </aside>
       </div>

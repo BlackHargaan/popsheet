@@ -1,4 +1,4 @@
-import { boxOnPage, contentPlacement, questionBox } from './layout'
+import { boxOnPage, contentPlacement, questionBox, randomId } from './layout'
 import { gridBox } from './grids'
 import type { Worksheet } from './types'
 
@@ -59,4 +59,57 @@ export function snapItems(ws: Worksheet, page: number, ids: string[], dx: number
     }
   }
   return { dx: dx + correctionX, dy: dy + correctionY, x, y }
+}
+
+/** Copies selected answer items at a consistent row/column spacing, with fresh IDs and labels. */
+export function duplicateItems(ws: Worksheet, page: number, ids: string[], count = 1, direction: 'down' | 'across' = 'down') {
+  const selected = editorItems(ws, page).filter(item => ids.includes(item.id))
+  if (!selected.length || !Number.isInteger(count) || count < 1 || count > 20) throw new Error('Select items and choose between 1 and 20 copies.')
+  const spanX = Math.max(...selected.map(i => i.x + i.width)) - Math.min(...selected.map(i => i.x)) + 12
+  const spanY = Math.max(...selected.map(i => i.y + i.height)) - Math.min(...selected.map(i => i.y)) + 12
+  let next = ws
+  let lastIds: string[] = []
+  const taken = new Set([...ws.questions, ...(ws.boxes ?? []), ...(ws.grids ?? [])].map(i => i.id))
+  const labels = new Set([...(ws.boxes ?? []), ...(ws.grids ?? [])].map(i => i.label))
+  let number = ws.questions.length + (ws.boxes?.length ?? 0) + (ws.grids?.length ?? 0) + 1
+  const label = () => { while (labels.has(String(number))) number++; const text = String(number++); labels.add(text); return text }
+  for (let n = 1; n <= count; n++) {
+    const mapping = new Map(selected.map(i => { const id = randomId(6, taken); taken.add(id); return [i.id, id] }))
+    const clone = <T extends { id: string; page: number }>(items: T[]) => items.filter(i => i.page === page && mapping.has(i.id)).map(i => ({ ...i, id: mapping.get(i.id)! }))
+    const questions = clone(ws.questions)
+    const boxes = clone(ws.boxes ?? []).map(b => ({ ...b, label: label() }))
+    const grids = clone(ws.grids ?? []).map(g => ({ ...g, label: label() }))
+    next = { ...next, questions: [...next.questions, ...questions], boxes: [...(next.boxes ?? []), ...boxes], grids: [...(next.grids ?? []), ...grids] }
+    lastIds = [...mapping.values()]
+    const dx = direction === 'across' ? spanX * n : 0, dy = direction === 'down' ? spanY * n : 0
+    const moved = moveItems(next, page, lastIds, dx, dy)
+    const before = editorItems(next, page).find(i => i.id === lastIds[0])!
+    const after = editorItems(moved, page).find(i => i.id === lastIds[0])!
+    if (Math.abs(after.x - before.x - dx) > .01 || Math.abs(after.y - before.y - dy) > .01) throw new Error('Not enough room for those copies. Try fewer copies, another direction, or move the selection first.')
+    next = moved
+  }
+  return { ws: next, ids: lastIds }
+}
+
+/** A reusable worksheet copy starts with its key and layout, without student or scan history. */
+export function duplicateWorksheet(ws: Worksheet): Worksheet {
+  const taken = new Set<string>()
+  const freshId = () => {
+    const id = randomId(6, taken)
+    taken.add(id)
+    return id
+  }
+  return {
+    id: randomId(6),
+    name: `${ws.name} (copy)`,
+    createdAt: Date.now(),
+    pdf: ws.pdf,
+    pages: ws.pages.map(page => ({ ...page })),
+    scale: ws.scale,
+    pageCodes: ws.pageCodes?.map(position => position ? { ...position } : null),
+    extras: [],
+    questions: ws.questions.map(q => ({ ...q, id: freshId() })),
+    boxes: ws.boxes?.map(b => ({ ...b, id: freshId() })),
+    grids: ws.grids?.map(g => ({ ...g, id: freshId() })),
+  }
 }

@@ -182,13 +182,14 @@ export async function buildPrintable(ws: Worksheet, copies: Copy[], version: num
   out.setTitle(ws.name)
   const font = await out.embedFont(StandardFonts.Helvetica)
   const bold = await out.embedFont(StandardFonts.HelveticaBold)
-  const embedded = await out.embedPages(src.getPages())
+  // Blank pages have no content stream to embed, but still need their page code and corner marks.
+  const embedded = await Promise.all(src.getPages().map(page => page.node.Contents() ? out.embedPage(page) : null))
 
   for (const copy of copies) {
     ws.pages.forEach((size, i) => {
       const page = out.addPage([size.width, size.height])
       const place = contentPlacement(size, ws.scale)
-      page.drawPage(embedded[i], {
+      if (embedded[i]) page.drawPage(embedded[i], {
         x: place.x,
         y: size.height - place.y - place.height,
         width: place.width,

@@ -1,3 +1,4 @@
+import { duplicateWorksheet } from '../core/editing'
 import { Backup } from './Backup'
 import { useEffect, useRef, useState } from 'react'
 import { randomId } from '../core/layout'
@@ -223,6 +224,10 @@ export function Home() {
                       )}
                     </div>
                     <div className="acts">
+                      <button className="sm" aria-label={`Duplicate worksheet ${w.name}`} onClick={() => { void (async () => {
+                        try { await saveWorksheet(duplicateWorksheet(w)); setItems(await fetchItems()) }
+                        catch { setError('Could not duplicate this worksheet. Please try again.') }
+                      })() }}>Duplicate</button>
                       <a className="btn sm" href={`#/w/${w.id}/print`}>
                         Print
                       </a>

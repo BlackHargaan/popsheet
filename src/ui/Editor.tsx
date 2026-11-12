@@ -1,4 +1,4 @@
-import { editorItems, moveItems, snapItems } from '../core/editing'
+import { duplicateItems, editorItems, moveItems, snapItems } from '../core/editing'
 import { useHistory } from './useHistory'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -62,6 +62,9 @@ export function Editor({ id }: { id: string }) {
   const setWs = history.set
   const [page, setPage] = useState(0)
   const [tool, setTool] = useState<Tool>('select')
+  const [copyCount, setCopyCount] = useState(1)
+  const [copyDirection, setCopyDirection] = useState<'down' | 'across'>('down')
+  const [copyError, setCopyError] = useState('')
   const [choices, setChoices] = useState(4)
   const [dir, setDir] = useState<'h' | 'v'>('h')
   const [gridCols, setGridCols] = useState(3)
@@ -80,6 +83,17 @@ export function Editor({ id }: { id: string }) {
   }, [id, setWs])
 
   const commit = history.commit
+
+  const duplicate = () => {
+    if (!ws) return
+    setCopyError('')
+    try {
+      const next = duplicateItems(ws, page, selection, copyCount, copyDirection)
+      commit(next.ws)
+      setSelection(next.ids)
+      setTool('select')
+    } catch (error) { setCopyError(error instanceof Error ? error.message : 'Could not duplicate selection.') }
+  }
 
   const removeItem = (itemId: string) => {
     if (!ws) return
@@ -103,6 +117,7 @@ export function Editor({ id }: { id: string }) {
       }
       if (e.key === 'Escape') { history.cancel(); drag.current = null; setGuides({}); setDraft(null); setSelected(null); return }
       if (!selection.length || drag.current) return
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') { e.preventDefault(); duplicate(); return }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         commit({ ...ws, questions: ws.questions.filter(q => !selection.includes(q.id)), boxes: ws.boxes?.filter(b => !selection.includes(b.id)), grids: ws.grids?.filter(g => !selection.includes(g.id)) })
@@ -450,6 +465,13 @@ export function Editor({ id }: { id: string }) {
             </span>
           )}
         </div>
+        {tool === 'select' && <div className="toolbar panel duplicate-tools">
+          <button disabled={!selection.length} onClick={duplicate} title="Duplicate selected items (Ctrl/Cmd+D)">Duplicate selection</button>
+          <label className="group">Copies <input aria-label="Number of duplicates" type="number" min={1} max={20} value={copyCount} onChange={e => setCopyCount(Math.max(1, Math.min(20, Number(e.target.value) || 1)))} /></label>
+          <label className="group">Direction <select aria-label="Duplicate direction" value={copyDirection} onChange={e => setCopyDirection(e.target.value as 'down' | 'across')}><option value="down">Down</option><option value="across">Across</option></select></label>
+          <span className="small muted">Copies keep the answer key and points, with new question labels.</span>
+        </div>}
+        {copyError && <p className="error" role="alert">{copyError}</p>}
         <p className="hint">
           {tool === 'select' ? (<span>Click to select · Shift-click to select several · Drag to move · Arrow keys to nudge (Shift: 10 pt) · Alt-drag skips snapping</span>) : tool === 'bubbles' ? (
             <>
