@@ -14,6 +14,20 @@ code; the code-to-name list stays on the teacher's device.
 4. **Scan** – drop in phone photos or a scanner PDF, any order, any way up.
 5. **Results** – check flagged marks, see per-question stats, export CSV.
 
+## Guided demo
+
+**Watch the demo** on the Worksheets screen walks through everything Popsheet does with a made-up
+class of eight students: the editor (bubbles, a number grid and written-answer boxes), classes and
+student codes, print checks and preview, scanning, results, the review queue, item analysis,
+grouped grading of written answers and export.
+
+The demo adds an ordinary worksheet ("Demo: Ratios & Rates Check-in") and class to the library.
+It makes simulated phone photos of each student's filled-in sheet in the browser (tilted, unevenly
+lit, one upside down, with a double mark, an erasure and a light mark) and feeds them to the real
+scanner. Only the written-answer readings are filled in by the demo, so it never downloads the
+handwriting model. The last step offers to keep or remove the demo data; reloading the page
+continues the tour where it was. Code: `src/demo/`.
+
 ## Development
 
 ```bash

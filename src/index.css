@@ -671,3 +671,34 @@ footer { padding-bottom: max(1.6rem, env(safe-area-inset-bottom)); }
   .toolbar .seg.tools { flex-wrap: wrap; max-width: 100%; }
   .pdf-page-grid { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
 }
+
+/* Guided demo */
+.tour-ring {
+  position: fixed; z-index: 45; pointer-events: none; border-radius: 12px;
+  border: 3px solid var(--hi);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--hi) 35%, transparent), 0 0 0 100vmax color-mix(in srgb, #15140f 28%, transparent);
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease;
+}
+.tour-card {
+  position: fixed; z-index: 70; right: 16px; bottom: 16px; width: min(380px, calc(100vw - 32px));
+  max-height: calc(100vh - 100px); overflow: auto;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-lift);
+  padding: 0.9rem 1.1rem 1rem; animation: fade 0.15s ease;
+}
+.tour-card h2 { font-family: var(--serif); font-size: 1.25rem; margin: 0.5rem 0 0.3rem; }
+.tour-card p, .tour-card ul { margin: 0.4rem 0; }
+.tour-card ul { padding-left: 1.1rem; }
+.tour-top { display: flex; align-items: center; justify-content: space-between; }
+.tour-bar { height: 4px; border-radius: 4px; background: var(--paper-2); overflow: hidden; margin-top: 0.3rem; }
+.tour-bar i { display: block; height: 100%; background: var(--hi); transition: width 0.25s ease; }
+.tour-body { font-size: 0.95rem; }
+.tour-note { color: var(--muted); font-size: 0.85rem; }
+.tour-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; align-items: center; margin-top: 0.8rem; }
+.tour-photos { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35rem; margin: 0.6rem 0; }
+.tour-photos img { width: 100%; aspect-ratio: 150 / 190; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
+@media (max-width: 639px) {
+  .tour-card { left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 48vh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tour-ring, .tour-bar i { transition: none; }
+}

@@ -7,6 +7,7 @@ import { layoutForScan } from '../core/versions'
 import { SCAN_PPP, fileToImages, grayToBlob } from './files'
 import { Arrow } from './icons'
 import { modelIsCached } from './reader'
+import { receiveDemoPhotos } from '../demo/demo'
 import { answersLeftToRead, jobsForPages, onReading, queueReading } from './readingQueue'
 import type { ScanImage } from './files'
 
@@ -109,6 +110,13 @@ export function Scan() {
       })
     }
   }
+
+  // The guided demo hands its photos over here, as if the teacher had chosen them.
+  const addRef = useRef(add)
+  useEffect(() => {
+    addRef.current = add
+  })
+  useEffect(() => receiveDemoPhotos((files) => addRef.current(files)), [])
 
   const sheets = new Map<string, Worksheet>()
   for (const it of items) if (it.worksheet) sheets.set(it.worksheet.id, it.worksheet)

@@ -9,6 +9,7 @@ import { deleteWorksheet, listScans, listWorksheets, saveWorksheet } from '../st
 import { renderPdfPage } from './files'
 import { Arrow } from './icons'
 import { go } from './nav'
+import { onDemoChange, startDemo } from '../demo/demo'
 
 type Item = Worksheet & { scanned: number }
 
@@ -55,6 +56,8 @@ export function Home() {
 
   useEffect(() => {
     void fetchItems().then(setItems)
+    // Starting or removing the demo adds or removes a worksheet.
+    return onDemoChange(() => void fetchItems().then(setItems))
   }, [])
 
   const create = async (file: File) => {
@@ -83,6 +86,15 @@ export function Home() {
     const ws = await makeSampleWorksheet()
     await saveWorksheet(ws)
     go(`/w/${ws.id}`)
+  }
+
+  const demo = async () => {
+    setError('')
+    try {
+      await startDemo()
+    } catch {
+      setError('The demo could not be set up. Please try again.')
+    }
   }
 
   const remove = async (w: Worksheet) => {
@@ -140,7 +152,10 @@ export function Home() {
               <button className="primary" onClick={pick}>
                 Upload a worksheet PDF
               </button>
-              <button onClick={() => void sample()}>Try the sample quiz</button>
+              <button className="hi" onClick={() => void demo()}>
+                Watch the demo
+              </button>
+              <button className="quiet" onClick={() => void sample()}>Try the sample quiz</button>
             </div>
             {error && <p className="error">{error}</p>}
           </div>
@@ -179,6 +194,9 @@ export function Home() {
               <h1>Worksheets</h1>
             </div>
             <div className="row">
+              <button className="quiet" onClick={() => void demo()}>
+                Watch the demo
+              </button>
               <button className="quiet" onClick={() => void sample()}>
                 Add the sample quiz
               </button>

@@ -1,3 +1,4 @@
+import { DemoTour } from './demo/DemoTour'
 import { Classes } from './ui/Classes'
 import { Editor } from './ui/Editor'
 import { Grade } from './ui/Grade'
@@ -63,6 +64,7 @@ export default function App() {
       </header>
       <main>{page}</main>
       <UpdateNotice />
+      <DemoTour />
       <footer>
         <Lock size={14} />
         Everything stays on this device. Worksheets, names and scans are never uploaded.
