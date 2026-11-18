@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { listScans } from '../store'
 import { go, useRoute } from '../ui/nav'
 import {
@@ -255,41 +256,88 @@ const STEPS: Step[] = [
   },
 ]
 
+/** True when the element, or something it sits in, stays put while the page scrolls. */
+function pinned(el: Element) {
+  for (let e: Element | null = el; e && e !== document.body; e = e.parentElement) {
+    if (getComputedStyle(e).position === 'fixed') return true
+  }
+  return false
+}
+
 /**
- * Keeps a highlight ring on the target, following scrolling and layout changes. `key` names the target: a new
- * key starts looking afresh (and scrolls the target into view once it appears).
+ * Keeps a highlight ring on the target. The ring is placed in page coordinates, so the browser scrolls it
+ * together with the page and it never trails behind; each frame only corrects for layout changes (and for
+ * sticky parts of the page). `key` names the target: a new key looks afresh, scrolls the target into view and
+ * slides the ring over. Returns the ring's ref and the target's on-screen box once scrolling settles, which is
+ * what the tour card uses to stay out of the way.
  */
-function useTargetRect(key: string, find: (() => Element | null) | null) {
-  const [found, setFound] = useState<{ key: string; rect: DOMRect } | null>(null)
+function useSpotlight(key: string, find: (() => Element | null) | null) {
+  const ring = useRef<HTMLDivElement>(null)
+  const [settled, setSettled] = useState<{ key: string; rect: DOMRect } | null>(null)
   const findRef = useRef(find)
   useEffect(() => {
     findRef.current = find
   })
   useEffect(() => {
+    const node = ring.current
+    if (!node) return
     let frame = 0
     let last = ''
+    let lastView = ''
     let scrolled = false
+    let target: Element | null = null
+    let fixed = false
+    let timer = 0
+    let settledOnce = false
+    node.classList.add('moving')
+    const stopMoving = setTimeout(() => node.classList.remove('moving'), 350)
     const tick = () => {
       const el = findRef.current?.() ?? null
+      if (el !== target) {
+        target = el
+        fixed = !!el && pinned(el)
+      }
       const r = el?.getBoundingClientRect() ?? null
-      if (el && r && r.width && !scrolled) {
+      const show = !!el && !!r && r.width > 0
+      if (show && !scrolled) {
         scrolled = true
         el.scrollIntoView({
           block: r.height > innerHeight * 0.7 ? 'start' : 'center',
           behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         })
       }
-      const sig = r && r.width ? `${r.x},${r.y},${r.width},${r.height}` : ''
+      const dx = fixed ? 0 : scrollX
+      const dy = fixed ? 0 : scrollY
+      const sig = show ? `${fixed}|${r.left + dx}|${r.top + dy}|${r.width}|${r.height}` : ''
       if (sig !== last) {
         last = sig
-        setFound(r && r.width ? { key, rect: r } : null)
+        if (show) {
+          node.style.display = 'block'
+          node.style.position = fixed ? 'fixed' : 'absolute'
+          node.style.left = `${r.left + dx - 6}px`
+          node.style.top = `${r.top + dy - 6}px`
+          node.style.width = `${r.width + 12}px`
+          node.style.height = `${r.height + 12}px`
+        } else node.style.display = 'none'
+      }
+      // The card only needs to know once the page stops moving.
+      const view = show ? `${r.left}|${r.top}|${r.width}|${r.height}` : ''
+      if (view !== lastView) {
+        lastView = view
+        clearTimeout(timer)
+        timer = window.setTimeout(() => setSettled(show ? { key, rect: r } : null), lastView && settledOnce ? 150 : 0)
+        settledOnce = true
       }
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+      clearTimeout(stopMoving)
+    }
   }, [key])
-  return found && found.key === key && find ? found.rect : null
+  return { ring, rect: settled && settled.key === key && find ? settled.rect : null }
 }
 
 let photos: { ws: string; list: DemoPhoto[] } | null = null
@@ -435,7 +483,7 @@ export function DemoTour() {
 
   const t = step?.target
   const find = !here || !t || !ids ? null : typeof t === 'string' ? () => document.querySelector(t) : () => t(ids)
-  const rect = useTargetRect(`${stepIndex}|${here}`, find)
+  const { ring, rect } = useSpotlight(`${stepIndex}|${here}`, find)
 
   useLayoutEffect(() => {
     const card = cardRef.current
@@ -466,13 +514,7 @@ export function DemoTour() {
 
   return (
     <>
-      {rect && (
-        <div
-          className="tour-ring"
-          aria-hidden="true"
-          style={{ left: rect.left - 6, top: rect.top - 6, width: rect.width + 12, height: rect.height + 12 }}
-        />
-      )}
+      {createPortal(<div ref={ring} className="tour-ring" aria-hidden="true" />, document.body)}
       <div
         ref={cardRef}
         className="tour-card"

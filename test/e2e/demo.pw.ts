@@ -66,6 +66,23 @@ test('the guided demo runs a whole class through Popsheet', async ({ page }) => 
   }
   await expect(page.locator('.table-wrap tfoot')).toContainText('A ×5')
 
+  // The highlight scrolls with the page: straight after a scroll, before the next frame, it still frames
+  // its target exactly.
+  await page.waitForTimeout(600)
+  const drift = await page.evaluate(() => {
+    const ring = document.querySelector('.tour-ring')!
+    const target = document.querySelector('.table-wrap tfoot')!
+    const out: number[] = []
+    for (const y of [0, 120, 400, 60]) {
+      scrollTo(0, y)
+      const a = ring.getBoundingClientRect()
+      const b = target.getBoundingClientRect()
+      out.push(Math.abs(a.top + 6 - b.top), Math.abs(a.left + 6 - b.left))
+    }
+    return Math.max(...out)
+  })
+  expect(drift).toBeLessThan(1)
+
   // Written answers are grouped.
   await next.click()
   await expect(tour).toContainText('Written answers, grouped')
