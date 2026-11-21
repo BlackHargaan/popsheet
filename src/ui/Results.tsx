@@ -259,11 +259,6 @@ export function Results({ id }: { id: string }) {
               Grade {ungraded} written answer{ungraded === 1 ? '' : 's'}
             </a>
           )}
-          {flaggedList.length > 0 && (
-            <button className="hi" onClick={startQueue}>
-              Check {flaggedList.length} flagged answer{flaggedList.length === 1 ? '' : 's'}
-            </button>
-          )}
         </div>
       </div>
 
